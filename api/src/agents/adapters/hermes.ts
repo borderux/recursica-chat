@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import type { ContextPacket } from "../context.js";
-import { config, dispatchTimeoutMs } from "../../lib/config.js";
+import { config, dispatchTimeoutMs, turnMsLeft, DISPATCH_SLACK_MS } from "../../lib/config.js";
 import type { AgentCallResponse } from "./dispatch.js";
 
 // Plain http(s).request instead of fetch: Node's fetch (undici) enforces a
@@ -42,10 +42,18 @@ export async function callHermesSocket(params: {
 }): Promise<AgentCallResponse | "HEARTBEAT_OK"> {
   // The WS registry lives in the API process; the worker dispatches via HTTP.
   const url = `${config.apiInternalUrl.replace(/\/$/, "")}/_internal/agent-dispatch`;
-  const timeoutMs = dispatchTimeoutMs();
-  // The api waits `timeoutMs` for the bridge; give the socket a little longer so
-  // the api's own 504 (with its reason) wins over a bare client-side abort.
-  const res = await postJson(url, { agentId: params.agentId, kind: params.kind, packet: params.packet, timeoutMs }, timeoutMs + 15_000);
+  // The turn's deadline (lib/config.ts): the bridge gets the time left until
+  // it, and the api waits until it plus delivery. The socket waits a little
+  // longer, so the api's own 504 (with its reason) wins over a client abort.
+  const timeoutAt = params.packet.runControls?.timeoutAt ? new Date(params.packet.runControls.timeoutAt) : null;
+  const now = new Date();
+  const turnMs = turnMsLeft(timeoutAt, now);
+  const timeoutMs = dispatchTimeoutMs(timeoutAt, now);
+  const res = await postJson(
+    url,
+    { agentId: params.agentId, kind: params.kind, packet: params.packet, timeoutMs, turnMs },
+    timeoutMs + DISPATCH_SLACK_MS,
+  );
   if (res.status === 404) throw new Error("agent_not_connected");
   if (res.status < 200 || res.status >= 300) throw new Error(`dispatch_${res.status}`);
   const { reply } = JSON.parse(res.text) as {

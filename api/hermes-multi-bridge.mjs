@@ -87,6 +87,44 @@ const CONTAINER_OPENCLAW_HOME = "/root/.openclaw";
 const STOP_GRACE_SEC = Math.max(5, Number(process.env.CC_AGENT_STOP_GRACE_SEC) || 45);
 const STOP_GRACE_MS = STOP_GRACE_SEC * 1000;
 
+// ── The turn's deadline ──────────────────────────────────────────────────
+// The api sends `turnMs` with each dispatch: the time left until the turn's
+// deadline, which the worker set when the turn started, from one setting
+// (HERMES_TIMEOUT plus CC_AGENT_STOP_GRACE_SEC on the api; turnLimitMs in
+// api/src/lib/config.ts). The api waits for the reply until that deadline
+// plus delivery, and applies every reply it gets in that wait. So the bridge
+// ends the turn by the deadline: SIGTERM when only the grace is left, so the
+// container shuts down cleanly, and at the deadline the container is killed.
+// A reply the bridge sends is then always applied, never cancelled as
+// run_timeout. Without turnMs (an older api), the bridge's own HERMES_TIMEOUT
+// plus the grace.
+function turnDeadlineAt(turnMs, now = Date.now()) {
+  const ms = Number(turnMs);
+  return now + (Number.isFinite(ms) && ms > 0 ? ms : HERMES_TIMEOUT * 1000 + STOP_GRACE_MS);
+}
+
+// When to stop one turn's process, counted from now.
+function turnStopTimes(deadline, now = Date.now(), graceMs = STOP_GRACE_MS) {
+  const killMs = Math.max(1_000, deadline - now);
+  return { termMs: Math.max(0, Math.min(killMs, deadline - graceMs - now)), killMs };
+}
+
+// SIGTERM at termMs; at the deadline, kill the container (killing only the
+// `docker run` client would leave the container running beside the next
+// turn) and the process.
+function stopByDeadline(p, deadline, containerName) {
+  const { termMs, killMs } = turnStopTimes(deadline);
+  const term = setTimeout(() => p.kill("SIGTERM"), termMs);
+  const kill = setTimeout(() => {
+    if (containerName) spawn("docker", ["kill", containerName], { stdio: "ignore" }).on("error", () => {});
+    p.kill("SIGKILL");
+  }, killMs);
+  p.on("close", () => {
+    clearTimeout(term);
+    clearTimeout(kill);
+  });
+}
+
 // Turn a container exit into a run error string, or null when it exited clean.
 //
 // SCOPE, so this is not over-read: `exitCode` is the exit status of
@@ -218,6 +256,7 @@ function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle) {
   // `-e` flags forward the agent's bot token + API base into the container so
   // its terminal / Python snippets can call back into /agent-api/* without
   // hard-coding secrets. See the `browser/agent-browser` skill for usage.
+  const name = handle ? turnContainerName(handle) : undefined;
   const envArgs = [];
   for (const [k, v] of Object.entries(envExtras)) {
     if (v !== undefined && v !== null) envArgs.push("-e", `${k}=${v}`);
@@ -229,7 +268,7 @@ function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle) {
     "run",
     "--rm",
     "-i",
-    ...(handle ? ["--name", turnContainerName(handle)] : []),
+    ...(name ? ["--name", name] : []),
     ...agentNetworkArgs(),
     // How long the daemon waits after SIGTERM before SIGKILLing the container.
     // Without it a stop is a 10 s guillotine through whatever s6 was draining.
@@ -253,7 +292,7 @@ function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle) {
     HERMES_IMAGE,
     ...hermesArgs,
   ];
-  return { cmd: "docker", args: dockerArgs, env: process.env };
+  return { cmd: "docker", args: dockerArgs, env: process.env, name };
 }
 
 // Triggers where output quality matters most: a human is waiting (mention/dm),
@@ -304,7 +343,7 @@ function hermesChatArgs(prompt, modelOverride) {
   return args;
 }
 
-function callHermes(prompt, hermesHome, token, modelOverride, handle) {
+function callHermes(prompt, hermesHome, token, modelOverride, handle, deadline = turnDeadlineAt()) {
   return new Promise((resolve, reject) => {
     const hermesArgs = hermesChatArgs(prompt, modelOverride);
     const envExtras = {
@@ -312,14 +351,11 @@ function callHermes(prompt, hermesHome, token, modelOverride, handle) {
       CC_BOT_TOKEN: token,
     };
     const spec = buildHermesSpawn(hermesHome, hermesArgs, envExtras, handle);
-    // The timeout SIGTERMs `docker run`, which forwards the signal to the
-    // container; the daemon then honours --stop-timeout, so the drain window
-    // above applies to the timeout path too. Add it to our own deadline so we
-    // don't abandon the child while it is still shutting down cleanly.
-    const p = spawn(spec.cmd, spec.args, {
-      timeout: HERMES_TIMEOUT * 1000 + STOP_GRACE_MS,
-      env: spec.env,
-    });
+    // SIGTERM reaches `docker run`, which forwards it to the container; the
+    // daemon then honours --stop-timeout, so the drain window above fits
+    // before the deadline (stopByDeadline).
+    const p = spawn(spec.cmd, spec.args, { env: spec.env });
+    stopByDeadline(p, deadline, spec.name);
     let out = "",
       err = "";
     p.stdout.on("data", (d) => (out += d));
@@ -335,13 +371,14 @@ function callHermes(prompt, hermesHome, token, modelOverride, handle) {
 // One-shot openclaw invocation against a container-local agent. Uses
 // `openclaw agent --local --agent main` — the `main` agent is always
 // present in a freshly onboarded state dir.
-function callOpenClaw(prompt, openclawHome, token, handle) {
+function callOpenClaw(prompt, openclawHome, token, handle, deadline = turnDeadlineAt()) {
   return new Promise((resolve, reject) => {
+    const name = handle ? turnContainerName(handle) : undefined;
     const args = [
       "run",
       "--rm",
       "-i",
-      ...(handle ? ["--name", turnContainerName(handle)] : []),
+      ...(name ? ["--name", name] : []),
       "--user",
       "0:0",
       ...agentNetworkArgs(),
@@ -362,7 +399,8 @@ function callOpenClaw(prompt, openclawHome, token, handle) {
       prompt,
       "--json",
     ];
-    const p = spawn("docker", args, { timeout: HERMES_TIMEOUT * 1000, env: process.env });
+    const p = spawn("docker", args, { env: process.env });
+    stopByDeadline(p, deadline, name);
     let out = "",
       err = "";
     p.stdout.on("data", (d) => (out += d));
@@ -1475,9 +1513,9 @@ function historyMessages(messages, agentMemberId) {
 // returns { exitError, rawText, runtimeFound }. When a person waits and the
 // reply is only HEARTBEAT_OK, the turn runs once more with WAITING_REMINDER
 // appended. When the reply is a tool call written as text, it runs once more
-// with TOOL_CALL_REMINDER, and a second one is dropped (toolCallAsText). The api waits HERMES_TIMEOUT + 60 s for the
-// bridge's reply (dispatchTimeoutMs in api/src/lib/config.ts), so the rerun
-// happens only when the first turn used under half of HERMES_TIMEOUT.
+// with TOOL_CALL_REMINDER, and a second one is dropped (toolCallAsText). Both
+// runs end by the turn's deadline (turnDeadlineAt), so the rerun happens only
+// when the first run used under half of the turn's time.
 //   silent: nothing to post (empty, HEARTBEAT_OK after the rerun, or a tool
 //           call as text after the rerun)
 //   note:   silent with a person waiting, so the no-reply note goes out
@@ -2435,6 +2473,9 @@ function connect(entry) {
       return;
     }
     if (frame.type !== "heartbeat" && frame.type !== "event") return;
+    // The turn ends by this deadline, however long it waits for its slot.
+    const frameAt = Date.now();
+    const deadline = turnDeadlineAt(frame.turnMs, frameAt);
 
     const p = frame.packet || {};
     const trigger = p.trigger;
@@ -2532,8 +2573,8 @@ function connect(entry) {
         // before ours still counts as this turn's.
         const startedSec = Date.now() / 1000 - 5;
         const { stdout, stderr, exitCode, signal } = isOpenClaw
-          ? await callOpenClaw(promptText, entry.openclawHome, entry.token, entry.handle)
-          : await callHermes(promptText, entry.hermesHome, entry.token, modelOverride, entry.handle);
+          ? await callOpenClaw(promptText, entry.openclawHome, entry.token, entry.handle, deadline)
+          : await callHermes(promptText, entry.hermesHome, entry.token, modelOverride, entry.handle, deadline);
         // A container that exited non-zero (or was killed) did NOT have a clean
         // turn, whatever text it managed to emit first: its supervision tree was
         // torn down mid-flight, which on Hermes suspends any in-flight cron
@@ -2561,7 +2602,7 @@ function connect(entry) {
       // A person waits on a DM or a human @-mention: a HEARTBEAT_OK reruns the
       // turn once with a reminder (turnForWaitingPerson).
       const waiting = Boolean(conv) && personWaits(trigger, p, last);
-      const turn = await turnForWaitingPerson(runOnce, prompt, { waiting, timeoutMs: HERMES_TIMEOUT * 1000 });
+      const turn = await turnForWaitingPerson(runOnce, prompt, { waiting, timeoutMs: deadline - frameAt });
       const { exitError, rawText, runtimeFound, retried } = turn;
       if (turn.toolCallAsText) console.warn(`[${entry.handle}] ${trigger} → a tool call written as text${turn.reran ? ", twice" : ""}; nothing posted`);
       else if (turn.reran) console.warn(`[${entry.handle}] ${trigger} → HEARTBEAT_OK or a tool call as text; ran the turn once more with a reminder`);
@@ -2735,6 +2776,9 @@ export {
   toolsInActions,
   droppedActionErrors,
   turnContainerName,
+  turnDeadlineAt,
+  turnStopTimes,
+  stopByDeadline,
   TOOLS_VS_ACTIONS,
   REQUEST_RULES,
   taskRequestBlock,

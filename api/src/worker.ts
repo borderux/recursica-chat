@@ -3,6 +3,7 @@ import { eq, desc, and, ne, gt, sql, inArray } from "drizzle-orm";
 import { AGENT_QUEUE, type AgentJobPayload } from "./agents/queue.js";
 import { redis } from "./lib/redis.js";
 import { envNum } from "./lib/env.js";
+import { replyInTime } from "./lib/config.js";
 import { db } from "./db/index.js";
 import {
   agents,
@@ -543,6 +544,10 @@ async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
       trace = response.trace ?? [];
     }
 
+    // When the reply reached the worker. A reply that came in the dispatch's
+    // wait is applied, never cancelled as run_timeout (replyInTime).
+    const replyAt = new Date();
+
     // A cancel/timeout that landed while the remote model was working is a
     // hard action boundary: retain the remote response nowhere and never apply
     // its side effects. This is the enforceable interrupt point for webhook and
@@ -554,7 +559,7 @@ async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
     }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1);
     if (
       !controlBeforeApply || controlBeforeApply.status === "cancelled" || controlBeforeApply.cancelRequestedAt ||
-      (controlBeforeApply.timeoutAt && controlBeforeApply.timeoutAt <= new Date())
+      !replyInTime(replyAt, controlBeforeApply.timeoutAt)
     ) {
       await db.update(agentRuns).set({
         status: "cancelled", errorText: controlBeforeApply?.cancelRequestedAt ? "cancelled_by_user" : "run_timeout",
