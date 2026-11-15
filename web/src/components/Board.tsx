@@ -8,6 +8,8 @@ import { api, type Task, type TaskStatus } from "../api/client";
 import Avatar from "./Avatar";
 import TaskModal from "./TaskModal";
 import VerificationBadge from "./VerificationBadge";
+import { BoardWorkingMarker, useTaskWorking } from "./TaskWorking";
+import { workOnTask } from "../lib/taskWorking";
 
 const COLUMNS: Array<{ id: TaskStatus; title: string; glyph: string }> = [
   { id: "backlog", title: "Backlog", glyph: "◦" },
@@ -23,6 +25,8 @@ function isOverdue(dueAt: string, status: TaskStatus): boolean {
 }
 
 export default function Board() {
+  // Fork: which cards an agent is working on (components/TaskWorking.tsx).
+  const working = useTaskWorking();
   const q = useTasks();
   const qc = useQueryClient();
   const me = useMe();
@@ -282,6 +286,7 @@ export default function Board() {
                     title={c.id}
                   >
                     <div className="kc-title">{scrubIds(c.title)}</div>
+                    <BoardWorkingMarker work={workOnTask(working, c.id)} />
                     {c.blockedBy && c.blockedBy.length > 0 && (
                       <div className="kc-blocked" title={`Blocked by ${c.blockedBy.length} unfinished task(s)`}>
                         <Lock size={10} strokeWidth={2.2} />

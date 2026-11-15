@@ -1099,11 +1099,12 @@ function copyHomeFile(home, homeDev, name, dir, { optional = false } = {}) {
   }
 }
 
-// The final message of the turn's session: { text } or { text: null, reason }.
-async function finalMessageFromSession(hermesHome, { sessionId, sinceSec } = {}) {
-  if (!hermesHome) return { text: null, reason: "no home" };
+// Opens a private, read-only copy of the home's state.db and passes it to
+// read(db). Throws StateDbRefused for a check that fails.
+async function withStateDb(hermesHome, read) {
+  if (!hermesHome) throw new StateDbRefused("no home");
   const sqlite = await loadSqlite();
-  if (!sqlite) return { text: null, reason: "node:sqlite unavailable" };
+  if (!sqlite) throw new StateDbRefused("node:sqlite unavailable");
   const home = resolvePath(hermesHome);
   let dir, db;
   try {
@@ -1119,28 +1120,127 @@ async function finalMessageFromSession(hermesHome, { sessionId, sinceSec } = {})
     copyHomeFile(home, homeStat.dev, "state.db", dir);
     copyHomeFile(home, homeStat.dev, "state.db-wal", dir, { optional: true });
     db = new sqlite.DatabaseSync(joinPath(dir, "state.db"), { readOnly: true });
-    const named = sessionId ? db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId) : undefined;
-    const session =
-      named ??
-      (Number.isFinite(sinceSec)
-        ? db.prepare("SELECT id FROM sessions WHERE source = 'tool' AND started_at >= ? ORDER BY started_at DESC LIMIT 1").get(sinceSec)
-        : undefined);
-    if (!session) return { text: null, reason: "no session for this turn" };
-    const last = db
-      .prepare("SELECT content, tool_calls FROM messages WHERE session_id = ? AND role = 'assistant' AND active = 1 ORDER BY id DESC LIMIT 1")
-      .get(session.id);
-    if (!last) return { text: null, reason: "no assistant message in the session" };
-    if (last.tool_calls && String(last.tool_calls).trim() !== "[]") return { text: null, reason: "the session ended on a tool call" };
-    const text = String(last.content ?? "").trim();
-    return text ? { text } : { text: null, reason: "the final message is empty" };
-  } catch (e) {
-    return { text: null, reason: e instanceof StateDbRefused ? e.message : `state.db could not be read (${e.message})` };
+    return read(db);
   } finally {
     try {
       db?.close();
     } catch {}
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// This turn's session: the one named, else the newest tool session started
+// since sinceSec.
+function turnSession(db, { sessionId, sinceSec } = {}) {
+  const named = sessionId ? db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId) : undefined;
+  return (
+    named ??
+    (Number.isFinite(sinceSec)
+      ? db.prepare("SELECT id FROM sessions WHERE source = 'tool' AND started_at >= ? ORDER BY started_at DESC LIMIT 1").get(sinceSec)
+      : undefined)
+  );
+}
+
+function lastAssistantMessage(db, sessionId) {
+  return db
+    .prepare("SELECT content, tool_calls FROM messages WHERE session_id = ? AND role = 'assistant' AND active = 1 ORDER BY id DESC LIMIT 1")
+    .get(sessionId);
+}
+
+// The final message of the turn's session: { text } or { text: null, reason }.
+async function finalMessageFromSession(hermesHome, { sessionId, sinceSec } = {}) {
+  try {
+    return await withStateDb(hermesHome, (db) => {
+      const session = turnSession(db, { sessionId, sinceSec });
+      if (!session) return { text: null, reason: "no session for this turn" };
+      const last = lastAssistantMessage(db, session.id);
+      if (!last) return { text: null, reason: "no assistant message in the session" };
+      if (last.tool_calls && String(last.tool_calls).trim() !== "[]") return { text: null, reason: "the session ended on a tool call" };
+      const text = String(last.content ?? "").trim();
+      return text ? { text } : { text: null, reason: "the final message is empty" };
+    });
+  } catch (e) {
+    return { text: null, reason: e instanceof StateDbRefused ? e.message : `state.db could not be read (${e.message})` };
+  }
+}
+
+// ── What a running turn is doing ─────────────────────────────────────────
+// While a Hermes turn runs, the bridge reads the turn's session every
+// TURN_PHASE_MS and sends the step it is on to the api as a "progress" frame:
+// the kind of tool its latest call uses ("reading skills", "writing files"),
+// or "thinking" before its first call. The api shows it on the task the turn
+// is for (api/src/lib/task-working.ts), which accepts only TURN_PHASES.
+const TURN_PHASE_MS = 15_000;
+const TURN_PHASES = [
+  "starting",
+  "thinking",
+  "reading skills",
+  "reading files",
+  "writing files",
+  "running a command",
+  "searching the web",
+  "using the browser",
+  "using tools",
+  "delegating",
+  "writing the reply",
+];
+
+function phaseOfTool(name) {
+  const n = String(name ?? "").toLowerCase();
+  if (!n) return "thinking";
+  if (n.startsWith("mcp__") || n.startsWith("mcp_")) return "using tools";
+  if (n.startsWith("skill")) return "reading skills";
+  if (n.startsWith("browser")) return "using the browser";
+  if (/^(read_file|search_files|list_files|list_directory|glob|grep|file_read)$/.test(n)) return "reading files";
+  if (/^(write_file|patch|edit_file|file_write|apply_patch|create_file)$/.test(n)) return "writing files";
+  if (/^(terminal|shell|bash|execute_code|process|run_command)$/.test(n)) return "running a command";
+  if (/^(web_search|web_extract|web_fetch|fetch)$/.test(n)) return "searching the web";
+  if (/^(delegate_task|delegate|spawn_agent)$/.test(n)) return "delegating";
+  return "using tools";
+}
+
+// The phase of an assistant message's tool_calls (JSON): its last call's tool.
+function phaseFromToolCalls(raw) {
+  let calls;
+  try {
+    calls = JSON.parse(String(raw ?? "[]"));
+  } catch {
+    return "thinking";
+  }
+  if (!Array.isArray(calls) || !calls.length) return "thinking";
+  const last = calls[calls.length - 1] ?? {};
+  return phaseOfTool(last.function?.name ?? last.name);
+}
+
+// The step the turn's session is on now, or null when it cannot be read.
+async function currentTurnPhase(hermesHome, sinceSec) {
+  try {
+    return await withStateDb(hermesHome, (db) => {
+      const session = turnSession(db, { sinceSec });
+      if (!session) return "starting";
+      const last = lastAssistantMessage(db, session.id);
+      return last ? phaseFromToolCalls(last.tool_calls) : "thinking";
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Reads the phase every `every` ms and sends each change. Returns stop().
+function watchTurnPhase({ read, send, every = TURN_PHASE_MS }) {
+  let last = null;
+  let stopped = false;
+  const tick = async () => {
+    const phase = await read().catch(() => null);
+    if (stopped || !phase || phase === last) return;
+    last = phase;
+    send(phase);
+  };
+  const t = setInterval(tick, every);
+  return () => {
+    stopped = true;
+    clearInterval(t);
+  };
 }
 
 // A Hermes turn's reply: the final message from the session when the console
@@ -2597,6 +2697,12 @@ function connect(entry) {
     const inbox = Array.isArray(p.inbox) ? p.inbox : [];
     const reply = (body) =>
       ws.send(JSON.stringify({ correlation_id: frame.correlation_id, type: "reply", ...body }));
+    // The step the turn is on, for the api to show on the turn's task.
+    const progress = (phase) => {
+      try {
+        ws.send(JSON.stringify({ correlation_id: frame.correlation_id, type: "progress", phase }));
+      } catch {}
+    };
 
     // Scheduled beats with no new activity → skip, don't wake Hermes UNLESS
     // the agent has open tasks. In that case fall through into a "task-only"
@@ -2678,6 +2784,7 @@ function connect(entry) {
 
     // A container this agent's earlier turn left running holds its home.
     if (usesTurnContainers(entry)) await reapTurnContainers([entry.handle]);
+    progress("starting");
 
     const prompt = buildPrompt(entry, p);
     try {
@@ -2690,9 +2797,20 @@ function connect(entry) {
         // A few seconds early, so a session the container's clock dates just
         // before ours still counts as this turn's.
         const startedSec = Date.now() / 1000 - 5;
-        const { stdout, stderr, exitCode, signal } = isOpenClaw
-          ? await callOpenClaw(promptText, entry.openclawHome, entry.token, entry.handle, deadline)
-          : await callHermes(promptText, entry.hermesHome, entry.token, modelOverride, entry.handle, deadline);
+        // What the turn is doing, for the task it is for (TURN_PHASES).
+        const stopPhase = isOpenClaw
+          ? () => {}
+          : watchTurnPhase({ read: () => currentTurnPhase(entry.hermesHome, startedSec), send: progress });
+        let ran;
+        try {
+          ran = isOpenClaw
+            ? await callOpenClaw(promptText, entry.openclawHome, entry.token, entry.handle, deadline)
+            : await callHermes(promptText, entry.hermesHome, entry.token, modelOverride, entry.handle, deadline);
+        } finally {
+          stopPhase();
+        }
+        progress("writing the reply");
+        const { stdout, stderr, exitCode, signal } = ran;
         // A container that exited non-zero (or was killed) did NOT have a clean
         // turn, whatever text it managed to emit first: its supervision tree was
         // torn down mid-flight, which on Hermes suspends any in-flight cron
@@ -2884,6 +3002,12 @@ export {
   dropFileWriteDiffs,
   sessionIdFrom,
   finalMessageFromSession,
+  phaseOfTool,
+  phaseFromToolCalls,
+  currentTurnPhase,
+  watchTurnPhase,
+  TURN_PHASES,
+  TURN_PHASE_MS,
   hermesTurnReply,
   hermesChatArgs,
   stripHermesRuntimeText,
