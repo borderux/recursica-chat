@@ -13,6 +13,7 @@ import { scheduleAgentHeartbeat } from "../agents/scheduler.js";
 import { id as makeId } from "../lib/ids.js";
 import { isInternalRequest } from "../lib/internal-request.js";
 import { dispatchTimeoutMs } from "../lib/config.js";
+import { recordTurnContainerStop } from "../lib/turn-container-stops.js";
 
 export default async function agentSocketWs(app: FastifyInstance): Promise<void> {
   app.get("/agent-socket", { websocket: true }, async (conn, req) => {
@@ -67,6 +68,10 @@ export default async function agentSocketWs(app: FastifyInstance): Promise<void>
         const data = JSON.parse(String(raw));
         if (data.type === "reply" && data.correlation_id) {
           resolvePending(data.correlation_id, data);
+        } else if (data.type === "turn_container_stopped") {
+          // The bridge stopped one of this agent's turn containers past its
+          // deadline (lib/turn-container-stops.ts).
+          await recordTurnContainerStop({ id: agent.id, handle: agent.handle }, data);
         } else if (data.type === "pong") {
           // keep-alive
         }

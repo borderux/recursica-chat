@@ -2,7 +2,7 @@
 // migrations/fork/*.sql (run by db/migrate.ts after drizzle's own
 // migrations), not by drizzle-kit, so upstream's schema.ts and migration
 // journal never change and the weekly upstream rebase has nothing to merge.
-import { boolean, integer, jsonb, pgTable, timestamp, varchar } from "drizzle-orm/pg-core";
+import { bigint, boolean, integer, jsonb, pgTable, timestamp, varchar } from "drizzle-orm/pg-core";
 
 // One row per task whose "Cloud models" setting is not the default. No row
 // means cluster only. See lib/cloud-models-rules.ts.
@@ -56,4 +56,13 @@ export const agentRunQueue = pgTable("agent_run_queue", {
   payload: jsonb("payload").notNull(),
   position: integer("position").notNull().default(0),
   enqueuedAt: timestamp("enqueued_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// Each turn container the bridge stopped past its deadline plus grace
+// (lib/turn-container-stops.ts), for an operator's notifier to post.
+export const turnContainerStops = pgTable("turn_container_stops", {
+  container: varchar("container", { length: 80 }).primaryKey(),
+  agentId: varchar("agent_id", { length: 32 }).notNull(),
+  overdueMs: bigint("overdue_ms", { mode: "number" }).notNull().default(0),
+  stoppedAt: timestamp("stopped_at", { withTimezone: true }).defaultNow().notNull(),
 });

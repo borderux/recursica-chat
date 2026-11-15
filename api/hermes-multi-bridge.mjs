@@ -288,6 +288,14 @@ const dockerTurnContainers = {
       .map((l) => l.trim())
       .filter(Boolean),
   remove: (names) => runDocker(["rm", "-f", ...names]),
+  listWithDeadlines: async () =>
+    (await runDocker(["ps", "--filter", "name=^cc-turn-", "--format", `{{.Names}}\t{{.Label "${DEADLINE_LABEL}"}}\t{{.CreatedAt}}`]))
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => {
+        const [name, deadline, createdAt] = l.split("\t");
+        return { name: name.trim(), deadline: (deadline ?? "").trim(), createdAt: (createdAt ?? "").trim() };
+      }),
 };
 
 // Removes the running turn containers of these agents. Returns the names it
@@ -306,12 +314,99 @@ async function reapTurnContainers(handles, docker = dockerTurnContainers) {
   }
 }
 
+// ── Overdue turn containers ──────────────────────────────────────────────
+// Each turn's container carries its deadline as a label (DEADLINE_LABEL), set
+// when it starts. Every TURN_SWEEP_MS the bridge stops any turn container of
+// its agents that is still running past that deadline plus the stop grace.
+// The deadline timer in stopByDeadline should have stopped it already; this
+// catches the containers that timer missed (a bridge restart mid-turn, a
+// `docker kill` that failed, a daemon that hung). Each container it stops is
+// reported to the api on its agent's socket ("turn_container_stopped"), which
+// records it (api/src/lib/turn-container-stops.ts) for an operator's notifier
+// to post. The bridge holds no Slack token. A container started without the
+// label (by an older bridge) is judged by its start time plus the default
+// turn limit.
+const TURN_SWEEP_MS = 5 * 60_000;
+const DEADLINE_LABEL = "cc.turn.deadline";
+
+// `docker ps` CreatedAt: "2026-01-02 03:04:05 -0500 EST".
+function dockerTimeMs(s) {
+  const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? ([+-]\d{2})(\d{2})\b/.exec(String(s ?? "").trim());
+  return m ? Date.parse(`${m[1]}T${m[2]}${m[3]}:${m[4]}`) : NaN;
+}
+
+function containerDeadline(row) {
+  const labelled = Number(row.deadline);
+  if (row.deadline && Number.isFinite(labelled) && labelled > 0) return labelled;
+  const created = dockerTimeMs(row.createdAt);
+  return Number.isFinite(created) ? created + HERMES_TIMEOUT * 1000 + STOP_GRACE_MS : NaN;
+}
+
+// The turn containers of these agents still running past deadline + grace.
+function overdueTurnContainers(rows, handles, now = Date.now(), graceMs = STOP_GRACE_MS) {
+  return rows
+    .map((r) => ({ r, handle: handles.find((h) => isTurnContainerOf(r.name, h)) }))
+    .filter((x) => x.handle !== undefined)
+    .map(({ r, handle }) => ({ name: r.name, handle, deadline: containerDeadline(r) }))
+    .filter((r) => Number.isFinite(r.deadline) && now > r.deadline + graceMs);
+}
+
+// The frame that reports one stopped container to the api.
+function stopFrame(c, now = Date.now()) {
+  return { type: "turn_container_stopped", container: c.name, overdueMs: Math.max(0, Math.round(now - c.deadline)) };
+}
+
+// Sends the report on the agent's own socket. Returns false when that socket
+// is not open; the container is stopped either way.
+function reportStop(c, now = Date.now(), sockets = conns) {
+  const ws = sockets.get(c.handle)?.ws;
+  if (!ws || ws.readyState !== 1) return false;
+  ws.send(JSON.stringify(stopFrame(c, now)));
+  return true;
+}
+
+// One sweep. Returns the names it stopped. Never throws.
+async function sweepOverdueTurnContainers(handles, docker = dockerTurnContainers, report = reportStop, now = Date.now()) {
+  if (!handles.length) return [];
+  let overdue;
+  try {
+    overdue = overdueTurnContainers(await docker.listWithDeadlines(), handles, now);
+  } catch (e) {
+    console.error(`[multi-bridge] listing turn containers for the sweep failed: ${e.message}`);
+    return [];
+  }
+  const stopped = [];
+  for (const c of overdue) {
+    try {
+      await docker.remove([c.name]);
+    } catch (e) {
+      console.error(`[multi-bridge] stopping overdue turn container ${c.name} failed: ${e.message}`);
+      continue;
+    }
+    stopped.push(c.name);
+    const min = Math.max(1, Math.round((now - c.deadline) / 60_000));
+    console.warn(`[multi-bridge] stopped turn container ${c.name}: still running ${min} min after its deadline`);
+    try {
+      if (!report(c, now)) console.warn(`[multi-bridge] ${c.handle}'s socket is not open; the stop of ${c.name} is only logged`);
+    } catch (e) {
+      console.error(`[multi-bridge] reporting the stop of ${c.name} failed: ${e.message}`);
+    }
+  }
+  return stopped;
+}
+
+// The label that tells the sweep when this turn's container is due to end.
+function deadlineLabelArgs(deadline) {
+  const ms = Math.round(Number(deadline));
+  return Number.isFinite(ms) && ms > 0 ? ["--label", `${DEADLINE_LABEL}=${ms}`] : [];
+}
+
 // An agent whose turns run in a container (Hermes in docker, or OpenClaw).
 function usesTurnContainers(entry) {
   return entry.kind === "openclaw" || typeof entry.openclawHome === "string" || HERMES_RUNTIME !== "host";
 }
 
-function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle) {
+function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle, deadline) {
   if (HERMES_RUNTIME === "host") {
     const env = { ...process.env, ...envExtras };
     if (hermesHome) env.HERMES_HOME = hermesHome;
@@ -338,6 +433,7 @@ function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle) {
     "--rm",
     "-i",
     ...(name ? ["--name", name] : []),
+    ...deadlineLabelArgs(deadline),
     ...agentNetworkArgs(),
     // How long the daemon waits after SIGTERM before SIGKILLing the container.
     // Without it a stop is a 10 s guillotine through whatever s6 was draining.
@@ -419,7 +515,7 @@ function callHermes(prompt, hermesHome, token, modelOverride, handle, deadline =
       CC_API_BASE: AGENT_API_BASE,
       CC_BOT_TOKEN: token,
     };
-    const spec = buildHermesSpawn(hermesHome, hermesArgs, envExtras, handle);
+    const spec = buildHermesSpawn(hermesHome, hermesArgs, envExtras, handle, deadline);
     // SIGTERM reaches `docker run`, which forwards it to the container; the
     // daemon then honours --stop-timeout, so the drain window above fits
     // before the deadline (stopByDeadline).
@@ -448,6 +544,7 @@ function callOpenClaw(prompt, openclawHome, token, handle, deadline = turnDeadli
       "--rm",
       "-i",
       ...(name ? ["--name", name] : []),
+      ...deadlineLabelArgs(deadline),
       "--user",
       "0:0",
       ...agentNetworkArgs(),
@@ -2901,6 +2998,14 @@ export {
   isTurnContainerOf,
   leftoverTurnContainers,
   reapTurnContainers,
+  overdueTurnContainers,
+  stopFrame,
+  reportStop,
+  dockerTimeMs,
+  sweepOverdueTurnContainers,
+  startTurnSweep,
+  TURN_SWEEP_MS,
+  DEADLINE_LABEL,
   startBridge,
   turnDeadlineAt,
   turnStopTimes,
@@ -2947,8 +3052,23 @@ async function startBridge(load = loadCfg, reap = reapTurnContainers, start = re
   start();
 }
 
+// Every TURN_SWEEP_MS, stop the turn containers of the agents in the config
+// that are past their deadline plus grace (sweepOverdueTurnContainers).
+function startTurnSweep(load = loadCfg, sweep = sweepOverdueTurnContainers, every = TURN_SWEEP_MS) {
+  return setInterval(() => {
+    let handles = [];
+    try {
+      handles = load().filter(usesTurnContainers).map((e) => e.handle);
+    } catch {
+      return; // reconcile() reports a bad config.
+    }
+    sweep(handles);
+  }, every);
+}
+
 if (!process.env.CC_BRIDGE_IMPORT_ONLY) {
   await startBridge();
+  startTurnSweep();
   watchFile(CFG_PATH, { interval: 1500 }, reconcile);
   console.log(`[multi-bridge] watching ${CFG_PATH} for changes`);
 }

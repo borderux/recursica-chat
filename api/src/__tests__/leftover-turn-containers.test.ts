@@ -81,11 +81,11 @@ describe("when the bridge starts, it removes every leftover before it connects",
   it("reaps the turn containers of every agent it serves, then connects", async () => {
     const order: string[] = [];
     await bridge.startBridge(
-      () => [{ handle: "designer" }, { handle: "reviewer" }, { handle: "porter", kind: "openclaw" }],
+      () => [{ handle: "designer" }, { handle: "reviewer" }, { handle: "helper", kind: "openclaw" }],
       async (h) => void order.push(`reap:${h.join(",")}`),
       () => void order.push("connect"),
     );
-    expect(order).toEqual(["reap:designer,reviewer,porter", "connect"]);
+    expect(order).toEqual(["reap:designer,reviewer,helper", "connect"]);
   });
 
   it("still connects with a bad config, and reaps nothing", async () => {
