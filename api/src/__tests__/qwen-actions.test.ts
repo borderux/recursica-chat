@@ -124,10 +124,10 @@ describe("the instruction for a newly assigned task", () => {
     myTasks: [],
   };
 
-  it("says to follow the persona and start the work in this turn, questions first when the persona asks them", () => {
+  it("puts asking first: a persona that asks replies with only its question and writes no files", () => {
     const prompt = bridge.buildPrompt({ handle: "designer", name: "Designer", hermesHome: "/opt/hermes-homes/.hermes-designer" }, packet);
-    expect(prompt).toContain("Follow your persona, and start the work in this turn");
-    expect(prompt).toContain("when your persona asks questions before working, write them now as your reply, in plain text: your reply is posted as a comment on this task");
+    expect(prompt).toContain("if your persona asks before working, your whole reply this turn is that question; write no files");
+    expect(prompt).toContain("Only when your persona does not ask before working, do the first real step of the work now.");
     expect(prompt).toContain("Never only move the task's status: a status change alone is not a turn's work.");
   });
 

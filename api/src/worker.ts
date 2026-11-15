@@ -23,6 +23,7 @@ import { runTaskId } from "./lib/cloud-models-rules.js";
 import { callAgent } from "./agents/adapters/dispatch.js";
 import { applyActions, refusedForRun, type AgentAction, type DroppedReply } from "./agents/executor.js";
 import { personWaits } from "./agents/waiting.js";
+import { advanceTaskOnTurnStart } from "./agents/task-status-follows-work.js";
 import {
   materialiseScheduledRun,
   cancelAgentHeartbeat,
@@ -405,6 +406,17 @@ async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
     // One-shot loop-break directive: if the previous run detected this agent in
     // a behavioral loop, it left a flag; consume it so this run gets told to
     // break the pattern (and the flag clears so it's a nudge, not a wall).
+    // The turn goes to the model now. A task it is for moves from Backlog to
+    // In progress, so the person sees the work start, not only when the
+    // turn's first comment lands (agents/task-status-follows-work.ts).
+    if (payload.taskId) {
+      const moved = await advanceTaskOnTurnStart(agent.id, payload.taskId, agent.workspaceId).catch((e) => {
+        console.error("[worker] moving the task on turn start failed", e);
+        return null;
+      });
+      if (moved) console.log(`[worker] agent=${agent.handle} ${moved}`);
+    }
+
     const stuckBreak = await consumeStuckBreak(agent.id);
     const lastCodeResult = await consumeCodeResult(agent.id);
 
