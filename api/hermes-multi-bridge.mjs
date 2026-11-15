@@ -259,8 +259,8 @@ function turnContainerName(handle, id = randomBytes(4).toString("hex")) {
 // running belongs to a turn that is over. `docker rm -f` kills the container
 // and returns once it is gone, so the new turn finds the home free.
 
-// The names of one agent's turn containers, and no other agent's: "betty"
-// does not match a container of "betty-qa".
+// The names of one agent's turn containers, and no other agent's: "designer"
+// does not match a container of "designer-qa".
 function isTurnContainerOf(name, handle) {
   const agent = turnContainerAgent(handle).replace(/[.]/g, "\\.");
   return new RegExp(`^cc-turn-${agent}-[0-9a-f]{8}$`).test(String(name));
