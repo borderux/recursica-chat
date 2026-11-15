@@ -237,9 +237,78 @@ function reconcile() {
 // A turn container's name: cc-turn-<agent>-<id>, so the host's notices name
 // the agent instead of Docker's random name. Docker allows [a-zA-Z0-9_.-]
 // after a leading letter or digit; anything else in a handle becomes "-".
+function turnContainerAgent(handle) {
+  return String(handle ?? "").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^[^a-z0-9]+|-+$/g, "").slice(0, 40) || "agent";
+}
 function turnContainerName(handle, id = randomBytes(4).toString("hex")) {
-  const agent = String(handle ?? "").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^[^a-z0-9]+|-+$/g, "").slice(0, 40) || "agent";
-  return `cc-turn-${agent}-${id}`;
+  return `cc-turn-${turnContainerAgent(handle)}-${id}`;
+}
+
+// ── Leftover turn containers ──────────────────────────────────────────────
+// A turn's container is stopped by this process: by the turn's deadline
+// timer, or by `docker run` exiting. When the bridge restarts mid-turn (a
+// deploy), both go with it, and the container keeps running in the agent's
+// home. Observed: one ran for an hour in a tool loop, and each new turn's
+// Hermes found the home held ("Profile /opt/data is held …"), failed to start
+// its model connection, and exited 1 after 48 s.
+//
+// So the bridge removes them: every leftover container of the agents it
+// serves when it starts, before it connects; and any running container of an
+// agent right before a new turn of that agent starts. The turn slot is held
+// then, and one container per home is the rule, so any container still
+// running belongs to a turn that is over. `docker rm -f` kills the container
+// and returns once it is gone, so the new turn finds the home free.
+
+// The names of one agent's turn containers, and no other agent's: "betty"
+// does not match a container of "betty-qa".
+function isTurnContainerOf(name, handle) {
+  const agent = turnContainerAgent(handle).replace(/[.]/g, "\\.");
+  return new RegExp(`^cc-turn-${agent}-[0-9a-f]{8}$`).test(String(name));
+}
+
+function leftoverTurnContainers(names, handles) {
+  return names.filter((n) => handles.some((h) => isTurnContainerOf(n, h)));
+}
+
+function runDocker(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("docker", args, { env: process.env });
+    let out = "", err = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.stderr.on("data", (d) => (err += d));
+    p.on("error", reject);
+    p.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(err.trim().slice(0, 200) || `docker exit ${code}`))));
+  });
+}
+
+const dockerTurnContainers = {
+  list: async () =>
+    (await runDocker(["ps", "--filter", "name=^cc-turn-", "--format", "{{.Names}}"]))
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean),
+  remove: (names) => runDocker(["rm", "-f", ...names]),
+};
+
+// Removes the running turn containers of these agents. Returns the names it
+// removed. Never throws: a failure is logged, and the turn goes ahead.
+async function reapTurnContainers(handles, docker = dockerTurnContainers) {
+  if (!handles.length) return [];
+  try {
+    const names = leftoverTurnContainers(await docker.list(), handles);
+    if (!names.length) return [];
+    await docker.remove(names);
+    console.warn(`[multi-bridge] removed leftover turn container(s): ${names.join(", ")}`);
+    return names;
+  } catch (e) {
+    console.error(`[multi-bridge] removing leftover turn containers failed: ${e.message}`);
+    return [];
+  }
+}
+
+// An agent whose turns run in a container (Hermes in docker, or OpenClaw).
+function usesTurnContainers(entry) {
+  return entry.kind === "openclaw" || typeof entry.openclawHome === "string" || HERMES_RUNTIME !== "host";
 }
 
 function buildHermesSpawn(hermesHome, hermesArgs, envExtras = {}, handle) {
@@ -2561,6 +2630,9 @@ function connect(entry) {
       return reply({ status: "HEARTBEAT_OK", trace: [slot.reason] });
     }
 
+    // A container this agent's earlier turn left running holds its home.
+    if (usesTurnContainers(entry)) await reapTurnContainers([entry.handle]);
+
     const prompt = buildPrompt(entry, p);
     try {
       const isOpenClaw = entry.kind === "openclaw" || typeof entry.openclawHome === "string";
@@ -2776,6 +2848,10 @@ export {
   toolsInActions,
   droppedActionErrors,
   turnContainerName,
+  isTurnContainerOf,
+  leftoverTurnContainers,
+  reapTurnContainers,
+  startBridge,
   turnDeadlineAt,
   turnStopTimes,
   stopByDeadline,
@@ -2808,8 +2884,21 @@ export {
   TASK_BODY_MAX,
 };
 
+// When the bridge starts: remove the turn containers a bridge that is gone
+// left running, then connect.
+async function startBridge(load = loadCfg, reap = reapTurnContainers, start = reconcile) {
+  let handles = [];
+  try {
+    handles = load().filter(usesTurnContainers).map((e) => e.handle);
+  } catch {
+    // reconcile() reports a bad config.
+  }
+  await reap(handles);
+  start();
+}
+
 if (!process.env.CC_BRIDGE_IMPORT_ONLY) {
-  reconcile();
+  await startBridge();
   watchFile(CFG_PATH, { interval: 1500 }, reconcile);
   console.log(`[multi-bridge] watching ${CFG_PATH} for changes`);
 }
