@@ -5,6 +5,7 @@ import { useMe, useWorkspaceMembers, useInvites, useMembersDirectory } from "../
 import { api } from "../api/client";
 import Segmented from "../components/Segmented";
 import { CloudModelsPolicySection } from "../components/CloudModels";
+import { SlackDmsSection } from "../components/SlackLink"; // Fork
 import { useTheme, type ThemeMode } from "../lib/theme";
 
 export default function SettingsPage() {
@@ -224,6 +225,7 @@ function ProfileSection({ user }: { user: { name: string; handle: string; email:
         </button>
       </div>
       <PasswordForm />
+      <SlackDmsSection />
     </section>
   );
 }
