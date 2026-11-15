@@ -31,7 +31,8 @@ export type Event =
   | { type: "conversation.read"; conversationId: string; memberId: string; lastReadAt: string | null; unread: boolean }
   | { type: "workflow.run.updated"; workspaceId: string; workflowId: string; runId: string; status: string }
   // Fork: an agent's queue of waiting requests changed (agents/turn-queue.ts).
-  | { type: "agent.queue.updated"; workspaceId: string; agentId: string };
+  | { type: "agent.queue.updated"; workspaceId: string; agentId: string }
+  | { type: "task.working"; workspaceId: string; taskId: string };
 
 const CONV_CHANNEL = (conversationId: string): string => `cc:conv:${conversationId}`;
 const WORKSPACE_CHANNEL = (workspaceId: string): string => `cc:workspace:${workspaceId}`;

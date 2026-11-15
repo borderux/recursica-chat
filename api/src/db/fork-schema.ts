@@ -58,6 +58,18 @@ export const agentRunQueue = pgTable("agent_run_queue", {
   enqueuedAt: timestamp("enqueued_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// What a task assignee's running turn is doing (lib/task-working.ts). One row
+// per running turn, from its start until its reply.
+export const taskTurnActivity = pgTable("task_turn_activity", {
+  runId: varchar("run_id", { length: 32 }).primaryKey(),
+  agentId: varchar("agent_id", { length: 32 }).notNull(),
+  taskId: varchar("task_id", { length: 32 }).notNull(),
+  workspaceId: varchar("workspace_id", { length: 32 }).notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+  phase: varchar("phase", { length: 40 }),
+  phaseAt: timestamp("phase_at", { withTimezone: true }),
+});
+
 // Each turn container the bridge stopped past its deadline plus grace
 // (lib/turn-container-stops.ts), for an operator's notifier to post.
 export const turnContainerStops = pgTable("turn_container_stops", {

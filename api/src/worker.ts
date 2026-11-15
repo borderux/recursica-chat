@@ -34,6 +34,7 @@ import {
   clearScheduledSkipBackoff,
 } from "./agents/scheduler.js";
 import { setAgentPresence } from "./lib/agent-presence.js";
+import { clearStaleTaskWork, endTaskWork, startTaskWork } from "./lib/task-working.js";
 import { classifyRunOutcome } from "./lib/run-outcome.js";
 import { logJudgeConfigOnce } from "./lib/task-verifier.js";
 import { audit } from "./lib/audit.js";
@@ -146,6 +147,9 @@ const worker = new Worker<AgentJobPayload>(
     } finally {
       const started = job.id ? startedRunByJob.get(job.id) : undefined;
       if (job.id) startedRunByJob.delete(job.id);
+      // The turn is over: its reply is applied, or it failed. The task card
+      // stops showing it working.
+      if (started) await endTaskWork(started);
       if (started) {
         await db
           .update(agentRuns)
@@ -415,6 +419,8 @@ async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
         return null;
       });
       if (moved) console.log(`[worker] agent=${agent.handle} ${moved}`);
+      // The task card shows the assignee working until the reply (lib/task-working.ts).
+      await startTaskWork({ runId, agentId: agent.id, taskId: payload.taskId, workspaceId: agent.workspaceId });
     }
 
     const stuckBreak = await consumeStuckBreak(agent.id);
@@ -981,6 +987,7 @@ worker.on("error", (e) => console.error("[worker] error", e));
 async function startAgentWorker(): Promise<void> {
   try {
     const { failed, started } = await recoverAfterRestart();
+    await clearStaleTaskWork().catch((e) => console.error("[worker] clearing the task cards' working lines failed", e));
     const agentIds = [...new Set(failed.map((r) => r.agentId))];
     if (agentIds.length) {
       await db

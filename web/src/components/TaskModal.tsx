@@ -24,6 +24,7 @@ import Modal from "./Modal";
 import VerificationBadge from "./VerificationBadge";
 import { CloudModelsField } from "./CloudModels";
 import { TaskPriorityField } from "./AgentQueue";
+import { TaskWorkingLine } from "./TaskWorking";
 import { describeCloudModels, type CloudModelsSetting } from "../lib/cloudModels";
 import { Popover } from "@base-ui/react/popover";
 import { useMentionPicker, resolveMentionIds } from "../lib/useMentionPicker";
@@ -319,6 +320,7 @@ export default function TaskModal({
                 }}
               />
             )}
+            <TaskWorkingLine taskId={t.id} />
             {spectator ? (
               t.bodyMd ? <div className="tm-body whitespace-pre-wrap">{scrubIds(t.bodyMd)}</div> : null
             ) : (
