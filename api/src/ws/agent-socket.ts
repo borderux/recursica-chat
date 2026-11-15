@@ -85,6 +85,7 @@ export default async function agentSocketWs(app: FastifyInstance): Promise<void>
       kind: "heartbeat" | "event";
       packet: Record<string, unknown>;
       timeoutMs?: number;
+      turnMs?: number;
     };
     if (!body?.agentId) return reply.code(400).send({ error: "agentId_required" });
     if (!hasAgentSocket(body.agentId)) return reply.code(404).send({ error: "agent_not_connected" });
@@ -92,7 +93,8 @@ export default async function agentSocketWs(app: FastifyInstance): Promise<void>
       const resp = await sendToAgentSocket(
         body.agentId,
         makeId("c").slice(2, 20),
-        { type: body.kind, packet: body.packet },
+        // turnMs: the time the bridge has before it kills the turn.
+        { type: body.kind, packet: body.packet, ...(body.turnMs && body.turnMs > 0 ? { turnMs: body.turnMs } : {}) },
         body.timeoutMs && body.timeoutMs > 0 ? body.timeoutMs : dispatchTimeoutMs(),
       );
       return reply.send({ reply: resp });

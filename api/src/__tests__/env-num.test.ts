@@ -74,10 +74,10 @@ describe("the call sites the empty strings actually broke", () => {
   });
 
   it("the dispatch timeout ignores empty declarations", () => {
-    expect(dispatchTimeoutMs({ CC_DISPATCH_TIMEOUT_MS: "", HERMES_TIMEOUT: "" })).toBe(
-      dispatchTimeoutMs({}),
+    const now = new Date();
+    expect(dispatchTimeoutMs(null, now, { HERMES_TIMEOUT: "", CC_AGENT_STOP_GRACE_SEC: "" })).toBe(
+      dispatchTimeoutMs(null, now, {}),
     );
-    expect(dispatchTimeoutMs({ CC_DISPATCH_TIMEOUT_MS: "", HERMES_TIMEOUT: "900" })).toBe(960_000);
-    expect(dispatchTimeoutMs({ CC_DISPATCH_TIMEOUT_MS: "120000" })).toBe(120_000);
+    expect(dispatchTimeoutMs(null, now, { HERMES_TIMEOUT: "900", CC_AGENT_STOP_GRACE_SEC: "" })).toBe(960_000);
   });
 });

@@ -61,12 +61,52 @@ export function autoApproveScopes(): string[] {
     .filter(Boolean);
 }
 
-// How long the worker→api internal dispatch waits for the bridge to return an
-// agent's reply. Must exceed the bridge's HERMES_TIMEOUT (seconds) or every
-// long tool-using run dies as `dispatch_504` while Hermes is still working.
-// Explicit CC_DISPATCH_TIMEOUT_MS wins; otherwise HERMES_TIMEOUT + 60 s.
-export function dispatchTimeoutMs(env: Record<string, string | undefined> = process.env): number {
-  const explicit = coerceInt(env.CC_DISPATCH_TIMEOUT_MS, 0, { min: 1 });
-  if (explicit > 0) return explicit;
-  return (coerceNum(env.HERMES_TIMEOUT, 480, { min: 1 }) + 60) * 1000;
+// One setting decides how long a turn lasts: the turn limit below. From it:
+//   - each turn's deadline, set when the turn starts (agents/turn-queue.ts);
+//   - when the bridge kills the turn: it gets the time left until the
+//     deadline with the dispatch, sends SIGTERM when the limit is spent and
+//     kills the container at the deadline (api/hermes-multi-bridge.mjs);
+//   - how long the api waits for the bridge's reply: until the deadline, plus
+//     TURN_DELIVERY_MS for a reply the bridge sends as it kills the turn;
+//   - whether a reply is applied: every reply the worker receives arrived in
+//     that wait, so none is cancelled as run_timeout (replyInTime).
+// CC_DISPATCH_TIMEOUT_MS, a second setting for the wait, is gone: a wait
+// longer than the deadline let a reply arrive after it and be cancelled.
+
+// The longest one turn can take: the bridge's turn limit (HERMES_TIMEOUT
+// seconds) plus the grace its container gets to shut down
+// (CC_AGENT_STOP_GRACE_SEC, at least 5 s). Read the same way the bridge
+// reads both values.
+export function turnLimitMs(env: Record<string, string | undefined> = process.env): number {
+  const limitSec = coerceNum(env.HERMES_TIMEOUT, 480, { min: 1 });
+  const graceSec = Math.max(5, coerceNum(env.CC_AGENT_STOP_GRACE_SEC, 45, { min: 1 }));
+  return (limitSec + graceSec) * 1000;
+}
+
+// Time for a reply the bridge sends at the deadline to reach the api.
+export const TURN_DELIVERY_MS = 15_000;
+// Time for the api's answer (the reply, or its 504) to reach the worker.
+export const DISPATCH_SLACK_MS = 15_000;
+
+// How long the api waits for the bridge: until the turn's deadline, plus
+// delivery. A dispatch without a deadline waits one whole turn.
+export function dispatchTimeoutMs(
+  timeoutAt: Date | null = null,
+  now = new Date(),
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const untilDeadline = timeoutAt ? +timeoutAt - +now : turnLimitMs(env);
+  return Math.max(1_000, untilDeadline) + TURN_DELIVERY_MS;
+}
+
+// The time the bridge has for the turn: what is left until the deadline.
+export function turnMsLeft(timeoutAt: Date | null, now = new Date(), env: Record<string, string | undefined> = process.env): number {
+  return Math.max(1_000, timeoutAt ? +timeoutAt - +now : turnLimitMs(env));
+}
+
+// A reply the worker received in the dispatch's wait is applied. Only a reply
+// that came later than any wait allows (a run whose deadline was cut short)
+// is cancelled as run_timeout.
+export function replyInTime(replyAt: Date, timeoutAt: Date | null): boolean {
+  return !timeoutAt || +replyAt <= +timeoutAt + TURN_DELIVERY_MS + DISPATCH_SLACK_MS;
 }
