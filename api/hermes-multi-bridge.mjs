@@ -321,9 +321,11 @@ async function reapTurnContainers(handles, docker = dockerTurnContainers) {
 // The deadline timer in stopByDeadline should have stopped it already; this
 // catches the containers that timer missed (a bridge restart mid-turn, a
 // `docker kill` that failed, a daemon that hung). Each container it stops is
-// posted to the stack's Slack channel (SLACK_BOT_TOKEN, SLACK_CHANNEL), when
-// both are set. A container started without the label (by an older bridge)
-// is judged by its start time plus the default turn limit.
+// reported to the api on its agent's socket ("turn_container_stopped"), which
+// records it (api/src/lib/turn-container-stops.ts) for an operator's notifier
+// to post. The bridge holds no Slack token. A container started without the
+// label (by an older bridge) is judged by its start time plus the default
+// turn limit.
 const TURN_SWEEP_MS = 5 * 60_000;
 const DEADLINE_LABEL = "cc.turn.deadline";
 
@@ -343,34 +345,28 @@ function containerDeadline(row) {
 // The turn containers of these agents still running past deadline + grace.
 function overdueTurnContainers(rows, handles, now = Date.now(), graceMs = STOP_GRACE_MS) {
   return rows
-    .filter((r) => handles.some((h) => isTurnContainerOf(r.name, h)))
-    .map((r) => ({ name: r.name, deadline: containerDeadline(r) }))
+    .map((r) => ({ r, handle: handles.find((h) => isTurnContainerOf(r.name, h)) }))
+    .filter((x) => x.handle !== undefined)
+    .map(({ r, handle }) => ({ name: r.name, handle, deadline: containerDeadline(r) }))
     .filter((r) => Number.isFinite(r.deadline) && now > r.deadline + graceMs);
 }
 
-function overdueNote(c, now = Date.now(), graceMs = STOP_GRACE_MS) {
-  const min = Math.max(1, Math.round((now - c.deadline) / 60_000));
-  return `Stopped turn container ${c.name}: still running ${min} min after its deadline (stop grace ${Math.round(graceMs / 1000)} s).`;
+// The frame that reports one stopped container to the api.
+function stopFrame(c, now = Date.now()) {
+  return { type: "turn_container_stopped", container: c.name, overdueMs: Math.max(0, Math.round(now - c.deadline)) };
 }
 
-// Posts one line to the stack's Slack channel. Returns false, and posts
-// nothing, when the token or the channel is not set.
-async function postToSlack(text, env = process.env, fetchImpl = fetch) {
-  const token = env.SLACK_BOT_TOKEN;
-  const channel = env.SLACK_CHANNEL;
-  if (!token || !channel) return false;
-  const r = await fetchImpl("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ channel, text, ...(env.STACK_NAME ? { username: env.STACK_NAME } : {}) }),
-  });
-  const body = await r.json().catch(() => ({}));
-  if (!body.ok) throw new Error(`slack refused the post: ${body.error ?? `http ${r.status}`}`);
+// Sends the report on the agent's own socket. Returns false when that socket
+// is not open; the container is stopped either way.
+function reportStop(c, now = Date.now(), sockets = conns) {
+  const ws = sockets.get(c.handle)?.ws;
+  if (!ws || ws.readyState !== 1) return false;
+  ws.send(JSON.stringify(stopFrame(c, now)));
   return true;
 }
 
 // One sweep. Returns the names it stopped. Never throws.
-async function sweepOverdueTurnContainers(handles, docker = dockerTurnContainers, post = postToSlack, now = Date.now()) {
+async function sweepOverdueTurnContainers(handles, docker = dockerTurnContainers, report = reportStop, now = Date.now()) {
   if (!handles.length) return [];
   let overdue;
   try {
@@ -388,12 +384,12 @@ async function sweepOverdueTurnContainers(handles, docker = dockerTurnContainers
       continue;
     }
     stopped.push(c.name);
-    const note = overdueNote(c, now);
-    console.warn(`[multi-bridge] ${note}`);
+    const min = Math.max(1, Math.round((now - c.deadline) / 60_000));
+    console.warn(`[multi-bridge] stopped turn container ${c.name}: still running ${min} min after its deadline`);
     try {
-      await post(note);
+      if (!report(c, now)) console.warn(`[multi-bridge] ${c.handle}'s socket is not open; the stop of ${c.name} is only logged`);
     } catch (e) {
-      console.error(`[multi-bridge] posting the stopped container to Slack failed: ${e.message}`);
+      console.error(`[multi-bridge] reporting the stop of ${c.name} failed: ${e.message}`);
     }
   }
   return stopped;
@@ -3003,9 +2999,9 @@ export {
   leftoverTurnContainers,
   reapTurnContainers,
   overdueTurnContainers,
-  overdueNote,
+  stopFrame,
+  reportStop,
   dockerTimeMs,
-  postToSlack,
   sweepOverdueTurnContainers,
   startTurnSweep,
   TURN_SWEEP_MS,

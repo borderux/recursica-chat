@@ -117,12 +117,6 @@ services:
       # short and every turn ends in a dirty shutdown that suspends the job and
       # re-interrupts it on the next boot (207 consecutive occurrences on live).
       CC_AGENT_STOP_GRACE_SEC: ${CC_AGENT_STOP_GRACE_SEC:-45}
-      # Every 5 minutes the bridge stops any turn container still running past
-      # its deadline plus the grace above, and posts each one it stops to this
-      # Slack channel. Leave either empty and it only logs them.
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-      SLACK_CHANNEL: ${SLACK_CHANNEL:-}
-      STACK_NAME: ${STACK_NAME:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${HERMES_HOMES_DIR:-/opt/hermes-homes}:${HERMES_HOMES_DIR:-/opt/hermes-homes}

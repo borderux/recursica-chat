@@ -6,17 +6,20 @@ import { resolve } from "node:path";
 // timer is gone (a bridge restart mid-turn) or its `docker kill` fails, the
 // container keeps running in the agent's home and every new turn of that
 // agent fails to start. Every 5 minutes the bridge now stops any turn
-// container past its deadline plus the stop grace, and posts each one to the
-// stack's Slack channel.
+// container past its deadline plus the stop grace, and reports each one to the
+// api on that agent's socket. The api records it for an operator's notifier
+// to post; the bridge holds no Slack token.
 
 type Row = { name: string; deadline: string; createdAt: string };
+type Stop = { name: string; handle: string; deadline: number };
 type Docker = { listWithDeadlines: () => Promise<Row[]>; remove: (names: string[]) => Promise<unknown> };
+type Sockets = Map<string, { ws: { readyState: number; send: (s: string) => void } }>;
 type Bridge = {
-  overdueTurnContainers: (rows: Row[], handles: string[], now?: number, graceMs?: number) => { name: string; deadline: number }[];
-  overdueNote: (c: { name: string; deadline: number }, now?: number, graceMs?: number) => string;
+  overdueTurnContainers: (rows: Row[], handles: string[], now?: number, graceMs?: number) => Stop[];
+  stopFrame: (c: Stop, now?: number) => { type: string; container: string; overdueMs: number };
+  reportStop: (c: Stop, now?: number, sockets?: Sockets) => boolean;
   dockerTimeMs: (s: string) => number;
-  postToSlack: (text: string, env?: Record<string, string | undefined>, fetchImpl?: typeof fetch) => Promise<boolean>;
-  sweepOverdueTurnContainers: (handles: string[], docker?: Docker, post?: (t: string) => Promise<unknown>, now?: number) => Promise<string[]>;
+  sweepOverdueTurnContainers: (handles: string[], docker?: Docker, report?: (c: Stop, now?: number) => boolean, now?: number) => Promise<string[]>;
   startTurnSweep: (load: () => unknown[], sweep: (h: string[]) => unknown, every?: number) => ReturnType<typeof setInterval>;
   buildHermesSpawn: (home: string, args: string[], env?: Record<string, string>, handle?: string, deadline?: number) => { args: string[] };
   TURN_SWEEP_MS: number;
@@ -46,7 +49,8 @@ describe("which turn containers are overdue", () => {
   it("is every container of the bridge's agents past its deadline plus grace, and no other", () => {
     const overdue = bridge.overdueTurnContainers(rows, ["designer", "reviewer", "writer", "helper"], now, GRACE);
     expect(overdue.map((c) => c.name)).toEqual(["cc-turn-designer-be0d6713", "cc-turn-helper-99aabbcc"]);
-    expect(overdue[0].deadline).toBe(now - 20 * min);
+    expect(overdue[0]).toEqual({ name: "cc-turn-designer-be0d6713", handle: "designer", deadline: now - 20 * min });
+    expect(overdue[1].handle).toBe("helper");
   });
 
   it("stops a container exactly one grace after its deadline, not before", () => {
@@ -90,71 +94,74 @@ describe("each turn's container carries its deadline", () => {
 });
 
 describe("a sweep", () => {
-  it("stops each overdue container and posts each one to Slack", async () => {
+  it("stops each overdue container and reports each one", async () => {
     const remove = vi.fn(async () => "");
-    const post = vi.fn(async (_text: string) => true);
-    const stopped = await bridge.sweepOverdueTurnContainers(["designer", "helper", "reviewer"], { listWithDeadlines: async () => rows, remove }, post, now);
+    const report = vi.fn((_c: Stop, _now?: number) => true);
+    const stopped = await bridge.sweepOverdueTurnContainers(["designer", "helper", "reviewer"], { listWithDeadlines: async () => rows, remove }, report, now);
     expect(stopped).toEqual(["cc-turn-designer-be0d6713", "cc-turn-helper-99aabbcc"]);
     expect(remove.mock.calls).toEqual([[["cc-turn-designer-be0d6713"]], [["cc-turn-helper-99aabbcc"]]]);
-    expect(post).toHaveBeenCalledTimes(2);
-    expect(post.mock.calls[0][0]).toBe(
-      "Stopped turn container cc-turn-designer-be0d6713: still running 20 min after its deadline (stop grace 45 s).",
-    );
-    expect(post.mock.calls[1][0]).toMatch(/^Stopped turn container cc-turn-helper-99aabbcc: /);
+    expect(report.mock.calls.map((c) => [c[0].name, c[0].handle])).toEqual([
+      ["cc-turn-designer-be0d6713", "designer"],
+      ["cc-turn-helper-99aabbcc", "helper"],
+    ]);
   });
 
-  it("posts nothing for a container it failed to stop, and goes on to the next", async () => {
+  it("reports nothing for a container it failed to stop, and goes on to the next", async () => {
     const remove = vi.fn(async (names: string[]) => {
       if (names[0] === "cc-turn-designer-be0d6713") throw new Error("no such container");
       return "";
     });
-    const post = vi.fn(async () => true);
-    const stopped = await bridge.sweepOverdueTurnContainers(["designer", "helper"], { listWithDeadlines: async () => rows, remove }, post, now);
+    const report = vi.fn(() => true);
+    const stopped = await bridge.sweepOverdueTurnContainers(["designer", "helper"], { listWithDeadlines: async () => rows, remove }, report, now);
     expect(stopped).toEqual(["cc-turn-helper-99aabbcc"]);
-    expect(post).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the stop when Slack fails, and never throws", async () => {
-    const post = vi.fn(async () => { throw new Error("slack down"); });
-    const stopped = await bridge.sweepOverdueTurnContainers(["designer"], { listWithDeadlines: async () => rows, remove: async () => "" }, post, now);
+  it("keeps the stop when the report fails, and never throws", async () => {
+    const report = vi.fn((): boolean => {
+      throw new Error("socket closed");
+    });
+    const stopped = await bridge.sweepOverdueTurnContainers(["designer"], { listWithDeadlines: async () => rows, remove: async () => "" }, report, now);
     expect(stopped).toEqual(["cc-turn-designer-be0d6713"]);
     await expect(
-      bridge.sweepOverdueTurnContainers(["designer"], { listWithDeadlines: async () => { throw new Error("docker down"); }, remove: async () => "" }, post, now),
+      bridge.sweepOverdueTurnContainers(["designer"], { listWithDeadlines: async () => { throw new Error("docker down"); }, remove: async () => "" }, report, now),
     ).resolves.toEqual([]);
   });
 
   it("does nothing without agents", async () => {
     const listWithDeadlines = vi.fn(async () => rows);
-    expect(await bridge.sweepOverdueTurnContainers([], { listWithDeadlines, remove: async () => "" }, async () => true, now)).toEqual([]);
+    expect(await bridge.sweepOverdueTurnContainers([], { listWithDeadlines, remove: async () => "" }, () => true, now)).toEqual([]);
     expect(listWithDeadlines).not.toHaveBeenCalled();
   });
 });
 
-describe("posting to the stack's Slack channel", () => {
-  it("sends the line to SLACK_CHANNEL with SLACK_BOT_TOKEN, named for the stack", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
-    const env = { SLACK_BOT_TOKEN: "xoxb-test", SLACK_CHANNEL: "C0EXAMPLE", STACK_NAME: "acme" };
-    expect(await bridge.postToSlack("hello", env, fetchImpl as unknown as typeof fetch)).toBe(true);
-    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://slack.com/api/chat.postMessage");
-    expect((init.headers as Record<string, string>).authorization).toBe("Bearer xoxb-test");
-    expect(JSON.parse(String(init.body))).toEqual({ channel: "C0EXAMPLE", text: "hello", username: "acme" });
+describe("reporting a stop", () => {
+  const stop = { name: "cc-turn-designer-be0d6713", handle: "designer", deadline: now - 20 * min };
+
+  it("goes on the agent's own socket, as a turn_container_stopped frame", () => {
+    const send = vi.fn();
+    const other = vi.fn();
+    const sockets: Sockets = new Map([
+      ["designer", { ws: { readyState: 1, send } }],
+      ["reviewer", { ws: { readyState: 1, send: other } }],
+    ]);
+    expect(bridge.reportStop(stop, now, sockets)).toBe(true);
+    expect(JSON.parse(send.mock.calls[0][0])).toEqual({ type: "turn_container_stopped", container: "cc-turn-designer-be0d6713", overdueMs: 20 * min });
+    expect(other).not.toHaveBeenCalled();
   });
 
-  it("posts nothing when the token or the channel is missing", async () => {
-    const fetchImpl = vi.fn();
-    expect(await bridge.postToSlack("x", { SLACK_CHANNEL: "C0EXAMPLE" }, fetchImpl as unknown as typeof fetch)).toBe(false);
-    expect(await bridge.postToSlack("x", { SLACK_BOT_TOKEN: "xoxb-test" }, fetchImpl as unknown as typeof fetch)).toBe(false);
-    expect(fetchImpl).not.toHaveBeenCalled();
+  it("is only logged when that socket is not open", () => {
+    const send = vi.fn();
+    expect(bridge.reportStop(stop, now, new Map([["designer", { ws: { readyState: 3, send } }]]))).toBe(false);
+    expect(bridge.reportStop(stop, now, new Map())).toBe(false);
+    expect(send).not.toHaveBeenCalled();
   });
 
-  it("reports a refused post without the token", async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "channel_not_found" })));
-    const err = await bridge
-      .postToSlack("x", { SLACK_BOT_TOKEN: "xoxb-test", SLACK_CHANNEL: "C0EXAMPLE" }, fetchImpl as unknown as typeof fetch)
-      .catch((e: Error) => e);
-    expect(String(err)).toMatch(/channel_not_found/);
-    expect(String(err)).not.toMatch(/xoxb/);
+  it("gives the bridge no Slack token or Slack call", () => {
+    const src = readFileSync(resolve(__dirname, "../../hermes-multi-bridge.mjs"), "utf8");
+    expect(src).not.toMatch(/SLACK_BOT_TOKEN|slack\.com|chat\.postMessage/);
+    const compose = readFileSync(resolve(__dirname, "../../../compose.agents.yml"), "utf8");
+    expect(compose.slice(compose.indexOf("\n  bridge:"))).not.toMatch(/SLACK/);
   });
 });
 
@@ -163,10 +170,10 @@ describe("the bridge runs the sweep", () => {
     vi.useFakeTimers();
     try {
       const sweep = vi.fn();
-      const t = bridge.startTurnSweep(() => [{ handle: "designer" }, { handle: "porter", kind: "openclaw" }], sweep, 1000);
+      const t = bridge.startTurnSweep(() => [{ handle: "designer" }, { handle: "reviewer", kind: "openclaw" }], sweep, 1000);
       expect(sweep).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1000);
-      expect(sweep).toHaveBeenCalledWith(["designer", "porter"]);
+      expect(sweep).toHaveBeenCalledWith(["designer", "reviewer"]);
       vi.advanceTimersByTime(1000);
       expect(sweep).toHaveBeenCalledTimes(2);
       clearInterval(t);
@@ -192,11 +199,5 @@ describe("the bridge runs the sweep", () => {
     const src = readFileSync(resolve(__dirname, "../../hermes-multi-bridge.mjs"), "utf8");
     const entry = src.slice(src.indexOf("if (!process.env.CC_BRIDGE_IMPORT_ONLY) {"));
     expect(entry).toMatch(/await startBridge\(\);\s*startTurnSweep\(\);/);
-  });
-
-  it("with the stack's Slack settings passed to the bridge container", () => {
-    const compose = readFileSync(resolve(__dirname, "../../../compose.agents.yml"), "utf8");
-    const bridgeSvc = compose.slice(compose.indexOf("\n  bridge:"));
-    for (const k of ["SLACK_BOT_TOKEN", "SLACK_CHANNEL", "STACK_NAME"]) expect(bridgeSvc).toMatch(new RegExp(`^\\s+${k}: \\$\\{${k}:-\\}$`, "m"));
   });
 });
