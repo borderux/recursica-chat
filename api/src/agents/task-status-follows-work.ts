@@ -3,15 +3,19 @@
 // no agent changed a task's status, and every task an agent was working on,
 // or had delivered, sat in Backlog.
 //
-//   - An assignee's first comment or file on a task in Backlog moves it to In
-//     progress.
+//   - An assignee's turn on a task in Backlog moves it to In progress when the
+//     turn starts. It used to wait for the assignee's first comment or file,
+//     which lands only when the turn ends: a long turn left the card in
+//     Backlog with nothing on it, and the person saw no sign of work.
+//   - An assignee's first comment or file on a task in Backlog still moves it
+//     to In progress.
 //   - A deliverable landing on the task (a task artifact) moves it to Review,
 //     unless the work says it is one part of several ("2 of 3"), when it stays
 //     In progress.
 //   - Never backwards, and never from Done, Blocked or Cancelled.
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { taskAssignees } from "../db/schema.js";
+import { members, taskAssignees } from "../db/schema.js";
 import { loadTask, updateTask } from "../lib/tasks-core.js";
 
 const ORDER = ["backlog", "in_progress", "review"] as const;
@@ -37,6 +41,12 @@ export function statusAfterAgentWork(
   return ORDER.indexOf(want) > at ? want : null;
 }
 
+// The status a task moves to when its assignee's turn on it starts: In
+// progress from Backlog, and nothing else.
+export function statusAfterTurnStart(current: string): "in_progress" | null {
+  return statusAfterAgentWork(current, { deliverable: false }) === "in_progress" ? "in_progress" : null;
+}
+
 // Applies the rule for one piece of work. Best-effort: a refused move (a
 // board stage's rules) is a trace line, never a failed action.
 export async function advanceTaskForAgentWork(
@@ -45,6 +55,7 @@ export async function advanceTaskForAgentWork(
   workspaceId: string,
   work: { deliverable: boolean; text?: string | null },
   trace: string[],
+  cause?: string,
 ): Promise<void> {
   const [assigned] = await db
     .select({ memberId: taskAssignees.memberId })
@@ -61,5 +72,20 @@ export async function advanceTaskForAgentWork(
     trace.push(`status ${task.status} → ${next} on ${taskId} not applied: ${String((r as { error: unknown }).error)}`);
     return;
   }
-  trace.push(`status ${task.status} → ${next} on ${taskId}: the assignee's ${work.deliverable ? "deliverable" : "work"} landed`);
+  trace.push(`status ${task.status} → ${next} on ${taskId}: ${cause ?? `the assignee's ${work.deliverable ? "deliverable" : "work"} landed`}`);
+}
+
+// An agent's turn on a task starts: when the agent is an assignee and the
+// task is in Backlog, the task moves to In progress. Returns the trace line,
+// or null when nothing moved.
+export async function advanceTaskOnTurnStart(agentId: string, taskId: string, workspaceId: string): Promise<string | null> {
+  const [member] = await db
+    .select({ id: members.id })
+    .from(members)
+    .where(and(eq(members.kind, "agent"), eq(members.refId, agentId)))
+    .limit(1);
+  if (!member) return null;
+  const trace: string[] = [];
+  await advanceTaskForAgentWork(taskId, member.id, workspaceId, { deliverable: false }, trace, "the assignee's turn started");
+  return trace[0] ?? null;
 }
