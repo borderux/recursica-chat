@@ -3,6 +3,7 @@ import { Users, Settings as SettingsIcon, LogOut, Menu as MenuIcon } from "lucid
 import Sidebar from "./Sidebar";
 import MemberDetailsPanel from "./MemberDetailsPanel";
 import FileViewer from "./FileViewer";
+import { SlackPrompt } from "./SlackLink"; // Fork
 import Menu from "./Menu";
 import TopSearch from "./TopSearch";
 import NotificationBell from "./NotificationBell";
@@ -136,6 +137,7 @@ export default function AppShell() {
         <MemberDetailsPanel />
       </div>
       <FileViewer />
+      <SlackPrompt />
     </div>
   );
 }

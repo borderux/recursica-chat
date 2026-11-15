@@ -57,3 +57,25 @@ export const agentRunQueue = pgTable("agent_run_queue", {
   position: integer("position").notNull().default(0),
   enqueuedAt: timestamp("enqueued_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Each person's Slack member ID, for Slack DMs about mentions (see
+// lib/slack-link-rules.ts). The ID waits in pendingSlackUserId until the
+// person types the code a notifier outside CircleChat sent to that ID. Only
+// slackUserId, the verified ID, gets a DM about a mention. The notifier writes
+// codeSalt, codeHash, codeSentAt, codeExpiresAt and sendError. CircleChat never
+// sees the code itself.
+export const userSlack = pgTable("user_slack", {
+  userId: varchar("user_id", { length: 32 }).primaryKey(),
+  slackUserId: varchar("slack_user_id", { length: 20 }),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  pendingSlackUserId: varchar("pending_slack_user_id", { length: 20 }),
+  codeRequestedAt: timestamp("code_requested_at", { withTimezone: true }),
+  codeSalt: varchar("code_salt", { length: 32 }),
+  codeHash: varchar("code_hash", { length: 64 }),
+  codeSentAt: timestamp("code_sent_at", { withTimezone: true }),
+  codeExpiresAt: timestamp("code_expires_at", { withTimezone: true }),
+  codeAttempts: integer("code_attempts").notNull().default(0),
+  sendError: varchar("send_error", { length: 60 }),
+  promptClosedAt: timestamp("prompt_closed_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
