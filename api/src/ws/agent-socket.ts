@@ -14,6 +14,7 @@ import { id as makeId } from "../lib/ids.js";
 import { isInternalRequest } from "../lib/internal-request.js";
 import { dispatchTimeoutMs } from "../lib/config.js";
 import { setTurnPhase } from "../lib/task-working.js";
+import { recordTurnContainerStop } from "../lib/turn-container-stops.js";
 
 export default async function agentSocketWs(app: FastifyInstance): Promise<void> {
   app.get("/agent-socket", { websocket: true }, async (conn, req) => {
@@ -71,6 +72,10 @@ export default async function agentSocketWs(app: FastifyInstance): Promise<void>
         } else if (data.type === "progress") {
           // The step the agent's running turn is on (lib/task-working.ts).
           await setTurnPhase(agent.id, data.phase);
+        } else if (data.type === "turn_container_stopped") {
+          // The bridge stopped one of this agent's turn containers past its
+          // deadline (lib/turn-container-stops.ts).
+          await recordTurnContainerStop({ id: agent.id, handle: agent.handle }, data);
         } else if (data.type === "pong") {
           // keep-alive
         }

@@ -16,6 +16,8 @@ import { id } from "./ids.js";
 import { publishToWorkspace } from "./events.js";
 import { setGoalStatus } from "./goal-status.js";
 import { enqueueAgentEvent } from "../agents/enqueue.js";
+import { extractMentionHandles, resolveHandlesToMemberIds } from "../agents/mention-triggers.js";
+import { commentWakeList } from "../agents/comment-wake.js";
 import { notify } from "./notifications.js";
 import { liveArtifactRows, isSubstantiveArtifact, purgeArtifactsForTasks } from "./task-artifacts.js";
 import { forgetTaskKnowledge } from "./knowledge.js";
@@ -1136,21 +1138,20 @@ export async function addComment(
     taskId,
     comment: row,
   });
-  // Wake damping: a HUMAN comment wakes every assignee (plus mentions) — the
-  // human is steering. An AGENT comment only wakes members it explicitly
-  // @-mentions. Fanning agent comments out to all assignees created
-  // comment→wake→comment echo loops between co-assigned agents (the
-  // credential-begging spiral: 119 task_comment runs/48h on one card).
-  const wake = new Set<string>(cleanMentions);
+  // Whom the comment wakes (agents/comment-wake.ts). A person's comment's
+  // mentions are the ones the client sent plus any @handle in the body that
+  // names a member, so a comment posted without a mentions array is judged
+  // by its text the same way.
+  let mentioned = cleanMentions;
   if (!actorIsAgent) {
-    const assignees = await db
-      .select({ memberId: taskAssignees.memberId })
-      .from(taskAssignees)
-      .where(eq(taskAssignees.taskId, taskId));
-    for (const a of assignees) wake.add(a.memberId);
+    const fromBody = await resolveHandlesToMemberIds(extractMentionHandles(bodyMd), workspaceId).catch(() => [] as string[]);
+    mentioned = Array.from(new Set([...cleanMentions, ...fromBody]));
   }
-  wake.delete(actorMemberId);
-  for (const mid of wake) {
+  const assignees =
+    actorIsAgent || mentioned.length
+      ? []
+      : (await db.select({ memberId: taskAssignees.memberId }).from(taskAssignees).where(eq(taskAssignees.taskId, taskId))).map((a) => a.memberId);
+  for (const mid of commentWakeList({ actorMemberId, actorIsAgent, mentions: mentioned, assignees })) {
     await maybeFireAgentTrigger(mid, taskId, t!.conversationId, "task_comment");
   }
   return { comment: row };

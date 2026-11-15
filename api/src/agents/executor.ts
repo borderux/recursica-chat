@@ -58,6 +58,7 @@ import { enqueueAgentEvent } from "./enqueue.js";
 import { safePublicFetch } from "../lib/safe-fetch.js";
 import { applyCounted } from "../lib/run-outcome.js";
 import { advanceTaskForAgentWork } from "./task-status-follows-work.js";
+import { isQuestion, loadQuestionContext, mentionPeopleOnQuestion } from "./question-mentions.js";
 import {
   HEARTBEAT_CREATE_TASK_ERROR,
   TASK_ACTIONS,
@@ -1662,10 +1663,17 @@ async function applyOne(
       // agent: the whole text goes into reply.md on the task, never cut.
       const split = splitLongReply(guard.bodyMd, bodyLimit("task", Boolean(ctx.deliverablesOnly)));
       if (split.file) safeAttachments.push(await storeTextFile(split.file));
+      // A question @mentions the task's people, never an agent (question-mentions.ts).
+      const asked = isQuestion(split.body)
+        ? mentionPeopleOnQuestion(split.body, Array.isArray(a.mentions) ? a.mentions : [], await loadQuestionContext(a.task_id, ws))
+        : { body: split.body, mentions: Array.isArray(a.mentions) ? a.mentions : [], added: [], dropped: [] };
+      if (asked.added.length || asked.dropped.length) {
+        out.trace.push(`task_comment question on ${a.task_id}: mentioned ${asked.added.map((h) => `@${h}`).join(" ") || "nobody new"}${asked.dropped.length ? `; dropped the @ of agent(s) ${asked.dropped.join(", ")}` : ""}`);
+      }
       const r = await addComment(
         a.task_id,
-        split.body,
-        Array.isArray(a.mentions) ? a.mentions : [],
+        asked.body,
+        asked.mentions,
         agentMemberId,
         ws,
         safeAttachments,
