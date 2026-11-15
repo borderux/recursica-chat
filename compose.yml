@@ -185,6 +185,9 @@ services:
       # Keep the internal dispatch wait above the bridge's per-run cap.
       HERMES_TIMEOUT: ${HERMES_TIMEOUT:-}
       CC_DISPATCH_TIMEOUT_MS: ${CC_DISPATCH_TIMEOUT_MS:-}
+      # Each turn's deadline is HERMES_TIMEOUT plus this grace, as the bridge's.
+      CC_AGENT_STOP_GRACE_SEC: ${CC_AGENT_STOP_GRACE_SEC:-}
+      CC_QUEUE_SWEEP_MS: ${CC_QUEUE_SWEEP_MS:-}
       # ── Planner / judge backend ────────────────────────────────────────
       # One OpenAI-compatible /v1 endpoint powers the goal planner, the mission
       # planner, the task condenser, the memory janitor, and the verification

@@ -70,3 +70,15 @@ export function dispatchTimeoutMs(env: Record<string, string | undefined> = proc
   if (explicit > 0) return explicit;
   return (coerceNum(env.HERMES_TIMEOUT, 480, { min: 1 }) + 60) * 1000;
 }
+
+// The longest one turn can take: the bridge's turn limit (HERMES_TIMEOUT
+// seconds) plus the grace its container gets to shut down
+// (CC_AGENT_STOP_GRACE_SEC, at least 5 s). The bridge kills `docker run` at
+// exactly this point (api/hermes-multi-bridge.mjs), so every turn gets this
+// as its deadline when it starts (agents/turn-queue.ts). Read the same way
+// the bridge reads both values.
+export function turnLimitMs(env: Record<string, string | undefined> = process.env): number {
+  const limitSec = coerceNum(env.HERMES_TIMEOUT, 480, { min: 1 });
+  const graceSec = Math.max(5, coerceNum(env.CC_AGENT_STOP_GRACE_SEC, 45, { min: 1 }));
+  return (limitSec + graceSec) * 1000;
+}

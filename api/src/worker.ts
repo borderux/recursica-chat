@@ -112,7 +112,14 @@ import { redactSecrets, redactLines } from "./lib/redaction.js";
 import { startGoalPlanWorker } from "./agents/goal-planner-worker.js";
 import { scheduleGoalSweep, scheduleMissionSweep } from "./lib/goal-queue.js";
 import { ambientHasMessages, heartbeatCursor, isHeartbeatTrigger, waitingTasksFor } from "./agents/settled-work.js";
-import { claimTurn, releaseTurn } from "./agents/turn-queue.js";
+import {
+  claimTurn,
+  releaseTurn,
+  recoverAfterRestart,
+  sweepQueues,
+  closedByRestart,
+  QUEUE_SWEEP_MS,
+} from "./agents/turn-queue.js";
 import { writeStorageProbe } from "./lib/storage-probe.js";
 import {
   modelRecommendation,
@@ -149,7 +156,9 @@ const worker = new Worker<AgentJobPayload>(
       await releaseTurn(job.data.agentId).catch((e) => console.error("[worker] queue release failed", e));
     }
   },
-  { connection: redis, concurrency: 10, lockDuration: 240_000 },
+  // Not started here: the runs the last worker left running are closed
+  // first (startAgentWorker below).
+  { connection: redis, concurrency: 10, lockDuration: 240_000, autorun: false },
 );
 
 async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
@@ -202,9 +211,14 @@ async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
 
     const [controlAtStart] = await db.select({
       status: agentRuns.status,
+      errorText: agentRuns.errorText,
       cancelRequestedAt: agentRuns.cancelRequestedAt,
       timeoutAt: agentRuns.timeoutAt,
     }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1);
+    // BullMQ hands back a job that was active when the last worker stopped.
+    // Its run was failed as worker_restarted at startup, and the agent's queue
+    // has moved on, so it is not run again.
+    if (controlAtStart && closedByRestart(controlAtStart)) return;
     if (
       !controlAtStart || controlAtStart.status === "cancelled" || controlAtStart.cancelRequestedAt ||
       (controlAtStart.timeoutAt && controlAtStart.timeoutAt <= new Date())
@@ -249,8 +263,7 @@ async function processAgentJob(job: Job<AgentJobPayload>): Promise<void> {
       return;
     }
     if (job.id) startedRunByJob.set(job.id, runId);
-    // A request that waited starts its clock now.
-    await db.update(agentRuns).set({ startedAt: new Date() }).where(eq(agentRuns.id, runId));
+    // claimTurn started the turn's clock and set its deadline.
     await db.update(agents).set({ status: "working" }).where(eq(agents.id, agent.id));
     void setAgentPresence(agent.id, "working");
     if (payload.conversationId) {
@@ -943,6 +956,42 @@ async function wakeReasonForAgent(agentId: string, sinceTs: Date): Promise<WakeR
 }
 
 worker.on("error", (e) => console.error("[worker] error", e));
+
+// Before the first job: fail every run the last worker left running, as
+// worker_restarted, and start the front of each affected agent's queue
+// (agents/turn-queue.ts). Then take jobs, and sweep the queues every minute
+// for an agent with requests waiting and no live turn.
+async function startAgentWorker(): Promise<void> {
+  try {
+    const { failed, started } = await recoverAfterRestart();
+    const agentIds = [...new Set(failed.map((r) => r.agentId))];
+    if (agentIds.length) {
+      await db
+        .update(agents)
+        .set({ status: "idle" })
+        .where(and(inArray(agents.id, agentIds), eq(agents.status, "working")));
+    }
+    for (const r of failed) {
+      await emitFinished(r.agentId, r.id, "failed", r.conversationId, { errors: ["worker_restarted"] }).catch((e) =>
+        console.error("[worker] run.finished for a restarted run failed", e),
+      );
+    }
+    if (failed.length || started.length) {
+      console.log(`[worker] restart: failed ${failed.length} run(s) left running; started ${started.length} queued request(s)`);
+    }
+  } catch (e) {
+    console.error("[worker] closing runs left running failed", e);
+  }
+  worker.run().catch((e) => console.error("[worker] agent worker stopped", e));
+  setInterval(() => {
+    sweepQueues()
+      .then((started) => {
+        if (started.length) console.log(`[worker] queue sweep started ${started.length} queued request(s)`);
+      })
+      .catch((e) => console.error("[worker] queue sweep failed", e));
+  }, QUEUE_SWEEP_MS);
+}
+void startAgentWorker();
 worker.on("failed", (job, err) => console.error("[worker] job failed", job?.id, err?.message));
 
 console.log(`[worker] circlechat agent-runs worker up, concurrency=10`);

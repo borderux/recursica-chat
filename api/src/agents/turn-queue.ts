@@ -16,6 +16,16 @@
 // request at the front. A heartbeat (scheduled or ambient) is not a request: it
 // is skipped while the agent is busy or has requests waiting.
 //
+// A turn that never ends must not hold its queue. Three things make sure:
+//   - Each turn gets a deadline when it starts: the bridge's turn limit plus
+//     its container's grace (turnLimitMs in lib/config.ts). Past it, the turn
+//     no longer holds the agent.
+//   - When the worker starts, every run the previous worker left running is
+//     failed as worker_restarted, and the front of each affected agent's queue
+//     starts (recoverAfterRestart).
+//   - Every minute, each agent with requests waiting and no live turn starts
+//     the front of its queue (sweepQueues).
+//
 // Stopping a running turn for an urgent request is left for later.
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -23,6 +33,7 @@ import { agentRuns, agents, tasks } from "../db/schema.js";
 import { agentRunQueue, taskPriorities } from "../db/fork-schema.js";
 import { publishToWorkspace } from "../lib/events.js";
 import { envNum } from "../lib/env.js";
+import { turnLimitMs } from "../lib/config.js";
 import { agentQueue, type AgentJobPayload } from "./queue.js";
 
 export const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
@@ -62,6 +73,13 @@ export function turnHoldsAgent(
   if (run.status !== "running") return false;
   if (run.timeoutAt && run.timeoutAt <= now) return false;
   return +now - +run.startedAt < staleMs;
+}
+
+// The deadline a turn gets when it starts. A later deadline the run already
+// has (a person extended it) stays.
+export function turnDeadline(now: Date, existing: Date | null, limitMs = turnLimitMs()): Date {
+  const deadline = new Date(+now + limitMs);
+  return existing && existing > deadline ? existing : deadline;
 }
 
 // What a run does when it reaches the worker:
@@ -147,7 +165,13 @@ export async function claimTurn(
       .where(and(eq(agentRunQueue.agentId, agentId), ne(agentRunQueue.runId, runId)));
     const c = decideClaim({ heartbeat, busy, waiting: n, fromQueue: payload.fromQueue === true });
     if (c === "go") {
-      await tx.update(agentRuns).set({ status: "running" }).where(eq(agentRuns.id, runId));
+      // The turn starts now: its clock, and its deadline.
+      const now = new Date();
+      const [run] = await tx.select({ timeoutAt: agentRuns.timeoutAt }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1);
+      await tx
+        .update(agentRuns)
+        .set({ status: "running", startedAt: now, timeoutAt: turnDeadline(now, run?.timeoutAt ?? null) })
+        .where(eq(agentRuns.id, runId));
       const gone = await tx.delete(agentRunQueue).where(eq(agentRunQueue.runId, runId)).returning({ runId: agentRunQueue.runId });
       changed = gone.length > 0;
     } else if (c === "hold") {
@@ -185,6 +209,106 @@ export async function releaseTurn(agentId: string): Promise<string | null> {
     return head.runId;
   });
   if (started) await announce(agentId);
+  return started;
+}
+
+// The error a run gets when a new worker finds it left running by the last one.
+export const WORKER_RESTARTED = "worker_restarted";
+
+export type LeftRunning = { id: string; agentId: string; conversationId: string | null };
+
+export type RecoveryDeps = {
+  // Every run marked running. Called before the new worker takes a job, so
+  // each of them belongs to a worker that is gone.
+  runningRuns: () => Promise<LeftRunning[]>;
+  // Fails the agent's runs that are still running; returns the ids it failed.
+  failRuns: (agentId: string, runIds: string[]) => Promise<string[]>;
+  // Starts the front of the agent's queue when the agent is free.
+  release: (agentId: string) => Promise<string | null>;
+};
+
+const dbRecoveryDeps: RecoveryDeps = {
+  runningRuns: () =>
+    db
+      .select({ id: agentRuns.id, agentId: agentRuns.agentId, conversationId: agentRuns.conversationId })
+      .from(agentRuns)
+      .where(eq(agentRuns.status, "running")),
+  failRuns: (agentId, runIds) =>
+    withAgentLock(agentId, async (tx) =>
+      (
+        await tx
+          .update(agentRuns)
+          .set({ status: "failed", errorText: WORKER_RESTARTED, finishedAt: new Date() })
+          .where(and(eq(agentRuns.agentId, agentId), inArray(agentRuns.id, runIds), eq(agentRuns.status, "running")))
+          .returning({ id: agentRuns.id })
+      ).map((r) => r.id),
+    ),
+  release: (agentId) => releaseTurn(agentId),
+};
+
+// Called once when the worker starts, before it takes a job. A worker that
+// stopped mid-turn (a deploy, a crash) left its runs running; they held each
+// agent until CC_TURN_STALE_MS ran out, and the agent's queue waited with
+// them. Each such run is failed as worker_restarted, then the front of each
+// affected agent's queue starts. One agent's error does not stop the others.
+export async function recoverAfterRestart(
+  deps: RecoveryDeps = dbRecoveryDeps,
+): Promise<{ failed: LeftRunning[]; started: string[] }> {
+  const byAgent = new Map<string, LeftRunning[]>();
+  for (const run of await deps.runningRuns()) {
+    byAgent.set(run.agentId, [...(byAgent.get(run.agentId) ?? []), run]);
+  }
+  const failed: LeftRunning[] = [];
+  const started: string[] = [];
+  for (const [agentId, runs] of byAgent) {
+    try {
+      const ids = new Set(await deps.failRuns(agentId, runs.map((r) => r.id)));
+      failed.push(...runs.filter((r) => ids.has(r.id)));
+      const head = await deps.release(agentId);
+      if (head) started.push(head);
+    } catch (e) {
+      console.error(`[turn-queue] recovering agent=${agentId} after a restart failed`, e);
+    }
+  }
+  return { failed, started };
+}
+
+// A job BullMQ hands back after a restart, for a run the restart already
+// failed, is not run again: the queue has moved on.
+export function closedByRestart(run: { status: string; errorText: string | null }): boolean {
+  return run.status === "failed" && run.errorText === WORKER_RESTARTED;
+}
+
+export const QUEUE_SWEEP_MS = envNum("CC_QUEUE_SWEEP_MS", 60_000, { min: 5_000 });
+
+export type SweepDeps = {
+  // Each agent with at least one request waiting.
+  queuedAgents: () => Promise<string[]>;
+  // Starts the front of the agent's queue when the agent has no live turn.
+  release: (agentId: string) => Promise<string | null>;
+};
+
+const dbSweepDeps: SweepDeps = {
+  queuedAgents: async () =>
+    (await db.selectDistinct({ agentId: agentRunQueue.agentId }).from(agentRunQueue)).map((r) => r.agentId),
+  release: (agentId) => releaseTurn(agentId),
+};
+
+// Runs every QUEUE_SWEEP_MS. A queue moves when a turn ends; a turn that
+// never ends (past its deadline, or its worker gone) used to leave the queue
+// waiting with nothing to move it. releaseTurn checks for a live turn under
+// the agent's lock, so a sweep never starts a second turn. Returns the runs
+// it started.
+export async function sweepQueues(deps: SweepDeps = dbSweepDeps): Promise<string[]> {
+  const started: string[] = [];
+  for (const agentId of await deps.queuedAgents()) {
+    try {
+      const head = await deps.release(agentId);
+      if (head) started.push(head);
+    } catch (e) {
+      console.error(`[turn-queue] queue sweep for agent=${agentId} failed`, e);
+    }
+  }
   return started;
 }
 
