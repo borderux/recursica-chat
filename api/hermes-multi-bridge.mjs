@@ -1494,7 +1494,7 @@ const WAITING_REMINDER = [
 // written out as text.
 const TOOL_CALL_REMINDER = [
   "REMINDER: your last reply was a tool call written out as text (JSON or code), so nothing ran and nothing was posted.",
-  "Call the tool itself through tool calling (write_file, terminal, execute_code), never by writing its arguments into your reply.",
+  "Call the tool itself through tool calling (write_file, terminal, execute_code, or an mcp__ tool such as a knowledge lookup), never by writing its arguments into your reply.",
   "write_file and read_file are tools you call now; <actions> run after your turn ends and cannot write files.",
   "Then reply in plain prose about what the tool did.",
 ].join(" ");
@@ -1539,13 +1539,37 @@ function replyBody(rawText) {
 
 // The Hermes tools a raw reply wrote as <actions> entries.
 function toolsInActions(rawText) {
-  return [...new Set((extractActions(String(rawText ?? "")).dropped ?? []).filter((t) => HERMES_TOOL_NAMES.has(t)))];
+  return [...new Set((extractActions(String(rawText ?? "")).dropped ?? []).filter(isToolName))];
+}
+
+// An MCP tool's name, as Hermes gives it to the model: mcp__<server>__<tool>.
+// Observed: a reply's <actions> block held mcp__recursica_knowledge__skill_family
+// in the parameter form. It is the agent's own tool, never a CircleChat action,
+// but it was not on HERMES_TOOL_NAMES, so it was dropped as an unknown action,
+// the turn was not rerun, and only the line before it was left to post.
+function isMcpToolName(name) {
+  return /^mcp__[A-Za-z0-9_-]+$/.test(String(name ?? ""));
+}
+
+// A tool the agent calls during its turn: Hermes's own, or an MCP server's.
+function isToolName(name) {
+  return HERMES_TOOL_NAMES.has(name) || isMcpToolName(name);
+}
+
+// A <function=…> block that never closes: the model stopped in the middle of a
+// tool call it was writing out as text, whatever the tool's name.
+function hasUnclosedFunctionBlock(rawText) {
+  let open = 0;
+  for (const m of String(rawText ?? "").matchAll(/<function=[^>\n]*>|<\/function>/g)) {
+    open = m[0].startsWith("</") ? Math.max(0, open - 1) : open + 1;
+  }
+  return open > 0;
 }
 
 // A reply that tried to use a tool by writing it out: printed JSON or code, or
 // a tool written as an <actions> entry.
 function isTextToolCall(rawText) {
-  return looksLikeTextToolCall(replyBody(rawText)) || toolsInActions(rawText).length > 0;
+  return looksLikeTextToolCall(replyBody(rawText)) || toolsInActions(rawText).length > 0 || hasUnclosedFunctionBlock(rawText);
 }
 
 // What a turn's <actions> block asked for that CircleChat did not run, as run
@@ -1553,7 +1577,7 @@ function isTextToolCall(rawText) {
 function droppedActionErrors(dropped, unreadable = []) {
   return [
     ...[...new Set(dropped ?? [])].slice(0, 10).map((type) =>
-      HERMES_TOOL_NAMES.has(type)
+      isToolName(type)
         ? `tool_in_actions: ${type} is a tool, not an action. Call it through tool calling during your turn; an <actions> entry runs after the turn and cannot write or read files.`
         : `unknown_action: ${type} is not a CircleChat action, so it did not run.`,
     ),
@@ -1840,6 +1864,28 @@ const STYLE_RULES = [
   `  • Scratch files (test scripts, fetch helpers) go under /opt/data/tmp/ (inside your writable root), never the root of your home or /workspace, and are never shared or mentioned in chat.`,
 ].join("\n");
 
+// A comment turn on a task where the agent has not asked yet gets the same
+// asking-first line as an assigned task. Observed: an assigned turn failed, the
+// person commented "Go ahead with this one", and the comment turn's instruction
+// said only to answer the comment, so the agent started building without the
+// question its persona asks first.
+const ASK_FIRST_ON_COMMENT =
+  "Asking comes first: you have not asked on this task yet, so if your persona asks before working, your whole reply this turn is that question; write no files. Your reply is posted as a comment on this task, and the person's answer starts your next turn.";
+
+// Whether the agent has asked on this task: one of its own comments there holds
+// a question mark outside code. A refused-reply note asks nothing, so it does
+// not count.
+function agentAskedOnTask(packet) {
+  const me = packet?.agent?.memberId;
+  const handle = packet?.agent?.handle;
+  const comments = Array.isArray(packet?.task?.recentComments) ? packet.task.recentComments : [];
+  return comments.some(
+    (c) =>
+      (me ? c?.memberId === me : c?.memberHandle === handle) &&
+      /\?/.test(String(c?.bodyMd ?? "").replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "")),
+  );
+}
+
 function buildPrompt(entry, packet) {
   const agent = packet.agent || {};
   const primaryConv = packet.inbox && packet.inbox[0];
@@ -1982,7 +2028,7 @@ Don't repeat yourself across heartbeats: if your last task_comment said "I'll dr
                 : packet.trigger === "task_assigned"
                   ? `You were assigned a task on the workspace board. Task details are below in the TASK block. Asking comes first: if your persona asks before working, your whole reply this turn is that question; write no files. Your reply is posted as a comment on this task, and the person's answer starts your next turn. Only when your persona does not ask before working, do the first real step of the work now. Never only move the task's status: a status change alone is not a turn's work. If this isn't in your lane, add a comment saying so and unassign yourself. Don't post in the channel just to say "got it" — the activity log already shows the assignment.`
                   : packet.trigger === "task_comment"
-                    ? `A new comment landed on a task you're involved with. Read the conversation on the task in the TASK block, oldest first: it continues from your last comment there. Your reply is posted as a comment on this task, never in a channel or a direct message. If the comment is a question for you, answer concretely. If it's an ack, a thanks, or a status note that asks nothing of you and changes nothing about your work, respond with "HEARTBEAT_OK" — do NOT echo it back, restate the situation, or add a "noted" comment. Silence is the correct move on the task thread more often than not.`
+                    ? `${agentAskedOnTask(packet) ? "" : `${ASK_FIRST_ON_COMMENT} `}A new comment landed on a task you're involved with. Read the conversation on the task in the TASK block, oldest first: it continues from your last comment there. Your reply is posted as a comment on this task, never in a channel or a direct message. If the comment is a question for you, answer concretely. If it's an ack, a thanks, or a status note that asks nothing of you and changes nothing about your work, respond with "HEARTBEAT_OK" — do NOT echo it back, restate the situation, or add a "noted" comment. Silence is the correct move on the task thread more often than not.`
                     : packet.trigger === "approval_response"
                       ? formatApprovalResponse(packet.approvalResponse)
                       : packet.trigger === "continuation"
@@ -2846,6 +2892,10 @@ export {
   turnForWaitingPerson,
   isTextToolCall,
   toolsInActions,
+  isMcpToolName,
+  agentAskedOnTask,
+  ASK_FIRST_ON_COMMENT,
+  hasUnclosedFunctionBlock,
   droppedActionErrors,
   turnContainerName,
   isTurnContainerOf,
