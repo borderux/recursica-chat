@@ -12,6 +12,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { toolDefault, neverByName, neverHttp } from "../server/src/toolpolicy.ts";
 import { startApp, setupOwner, mockAgent, agentReply, waitFor, fakeServer, Client, type Harness } from "./helpers.ts";
+import { noOutsideNetwork, type NetworkGuard } from "./no-network.ts";
 
 // ---------------------------------------------------------------- the rules
 
@@ -78,9 +79,13 @@ let agent: any;
 let chat: any;
 let gh: Awaited<ReturnType<typeof fakeServer>>;
 let conn: any;
+let guard: NetworkGuard;
 const REPO = "acme/example-app";
 
 before(async () => {
+  // Nothing in this file may reach the internet, even if the never-list breaks: any connection or
+  // lookup that isn't for loopback is refused before it happens, and recorded.
+  guard = noOutsideNetwork();
   process.env.CIRCLECHAT_TOOL_DEFAULT = "block";
   h = await startApp({ approvalTtlMs: 20_000 });
   owner = await setupOwner(h);
@@ -102,6 +107,8 @@ after(async () => {
   await gh.close();
   await h.close();
   delete process.env.CIRCLECHAT_TOOL_DEFAULT;
+  guard.release();
+  assert.deepEqual(guard.attempts, [], "nothing in this file tried to leave the machine");
 });
 
 const tool = async (as: Client, chatId: string, name: string, args: unknown) => {
@@ -151,9 +158,20 @@ test("2. an HTTP connection to api.github.com can't merge or delete, even allowe
     ["github_api_delete", { path: `/repos/${REPO}` }],
     ["github_api_post", { path: "/graphql", body: { query: 'mutation { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }' } }],
   ];
-  for (const [name, args] of calls) assert.match(await run(name, args), /Blocked: .*on GitHub|GraphQL mutation/, `${name} ${args.path}`);
+  for (const [name, args] of calls) {
+    assert.match(await run(name, args), /Blocked: .*on GitHub|GraphQL mutation/, `${name} ${args.path}`);
+    assert.deepEqual(guard.attempts, [], `${name} ${args.path}: nothing tried to reach GitHub`);
+  }
   const blocked = (await log()).filter((x) => x.tool.startsWith("github_api_") && x.status === "blocked" && /^never allowed/.test(x.approval));
   assert.equal(blocked.length, calls.length, "each refused before it was sent");
+  assert.deepEqual(guard.attempts, [], "no connection or lookup left the machine");
+});
+
+test("the guard itself: a request that would leave the machine is refused before any lookup, and recorded", async () => {
+  const before = guard.attempts.length;
+  await assert.rejects(fetch("https://api.github.com/zen"), "refused");
+  assert.deepEqual(guard.attempts.slice(before), ["api.github.com:443"]);
+  guard.attempts.length = before; // this one was on purpose
 });
 
 test("2. an MCP server's own merge tool is never allowed, whatever its rule (the third way around)", () => {
