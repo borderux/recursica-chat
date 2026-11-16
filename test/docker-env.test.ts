@@ -44,8 +44,9 @@ before(async () => {
     `#!/bin/sh
 if [ "$1" = run ]; then
   f="${out}/run-$$"
-  for a in "$@"; do printf '%s\\n' "$a"; done > "$f.args"
-  env > "$f.env"
+  for a in "$@"; do printf '%s\\n' "$a"; done > "$f.args.tmp" && mv "$f.args.tmp" "$f.args"
+  env > "$f.env.tmp" && mv "$f.env.tmp" "$f.env"
+  : > "$f.done"
   exit 1
 fi
 exit 0
@@ -65,14 +66,22 @@ after(async () => {
 
 /** Start an agent in the docker sandbox, and return what the stand-in docker recorded for it. */
 async function recordRun(handle: string, engine: string, model: string): Promise<{ args: string[]; env: Map<string, string> }> {
-  const seen = new Set(readdirSync(out));
   const r = await c.post("/api/agents", { name: handle[0].toUpperCase() + handle.slice(1), handle, engine, model, sandbox: "docker" });
   assert.equal(r.status, 200, JSON.stringify(r.json));
-  const chat = (await c.post("/api/chats", { dmAgent: r.json.agent.id })).json.chat;
+  const agentId = r.json.agent.id;
+  const chat = (await c.post("/api/chats", { dmAgent: agentId })).json.chat;
   await c.post(`/api/chats/${chat.id}/messages`, { body: "hello" });
-  const file = await waitFor(() => readdirSync(out).find((f) => f.endsWith(".env") && !seen.has(f)), `docker run for ${handle}`);
-  const base = join(out, file.replace(/\.env$/, ""));
-  await waitFor(() => readdirSync(out).includes(file.replace(/\.env$/, ".args")), "the arguments file");
+  // The stand-in writes .args and .env whole (each under a temporary name first), then .done.
+  // The run for this agent is the one whose arguments name its container, cc-<handle>-....
+  const base = await waitFor(() => {
+    for (const f of readdirSync(out).filter((n) => n.endsWith(".done"))) {
+      const b = join(out, f.replace(/\.done$/, ""));
+      if (readFileSync(`${b}.args`, "utf8").split("\n").some((a) => a.startsWith(`cc-${handle}-`))) return b;
+    }
+    return undefined;
+  }, `docker run for ${handle}`);
+  // the stand-in fails on purpose; pause the agent so it doesn't keep restarting
+  await c.post(`/api/agents/${agentId}/pause`);
   const args = readFileSync(`${base}.args`, "utf8").split("\n").filter(Boolean);
   const env = new Map(
     readFileSync(`${base}.env`, "utf8")
