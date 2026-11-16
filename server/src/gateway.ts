@@ -16,6 +16,7 @@ import { json, now } from "./db.ts";
 import { id, token, Vault } from "./crypto.ts";
 import { appendToolCall } from "./toollog.ts";
 import { connectionHeaders, formEncode } from "./apps.ts";
+import { toolDefault, neverByName, neverHttp } from "./toolpolicy.ts";
 import type { Services, Agent } from "./services.ts";
 
 export type Decision = "allow" | "ask" | "block" | "off";
@@ -27,6 +28,8 @@ export interface ToolDef {
   inputSchema: any;
   category: Category;
   resource?: { type: "connection" | "mcp"; id: string; name: string; identity: string };
+  /** an HTTP connection's tool: the method and base address, for the never-list */
+  http?: { method: string; base: string };
   run(args: any, ctx: CallContext): Promise<string>;
 }
 
@@ -161,14 +164,34 @@ export class Gateway {
   }
   decide(t: ToolDef, chatId: string): Decision {
     if (t.category === "core" || !t.resource) return "allow";
+    if (neverByName(t.name, t.resource.type)) return "block";
     const p = this.db
       .prepare("SELECT tool, decision FROM policies WHERE resource_type = ? AND resource_id = ? AND tool IN (?, ?)")
       .all(t.resource.type, t.resource.id, t.name, `${t.name}@chat:${chatId}`) as any[];
+    const own = p.find((r) => !r.tool.includes("@chat:"));
     const chatScoped = p.find((r) => r.tool.includes("@chat:"));
-    if (chatScoped) return chatScoped.decision;
-    if (p[0]) return p[0].decision;
+    const base: Decision = own?.decision ?? this.defaultDecision(t);
+    // a Block (or Off) always outranks a chat-scoped Allow from an earlier "Always" answer
+    if (base === "block" || base === "off") return base;
+    return chatScoped?.decision ?? base;
+  }
+
+  /** What a tool gets with no rule of its own. */
+  defaultDecision(t: ToolDef): Decision {
+    if (t.category === "core" || !t.resource) return "allow";
+    if (neverByName(t.name, t.resource.type)) return "block";
     if (t.resource.type === "mcp") return "off"; // MCP tools stay off until reviewed
+    if (toolDefault() === "block") return "block"; // CIRCLECHAT_TOOL_DEFAULT=block
     return t.category === "read" ? "allow" : t.category === "write" ? "ask" : "block";
+  }
+
+  /** A connection's tools with the decision each gets with no rule, and those on the never-list. */
+  connectionDefaults(c: any): { defaults: Record<string, Decision>; never: string[] } {
+    const tools = connectionTools(c, this);
+    return {
+      defaults: Object.fromEntries(tools.map((t) => [t.name, this.defaultDecision(t)])),
+      never: tools.filter((t) => neverByName(t.name, "connection")).map((t) => t.name),
+    };
   }
 
   // ------------------------------------------------------------ tool catalogue
@@ -400,6 +423,12 @@ export class Gateway {
       return { text: `Tool ${name} is not available to you in this chat.`, isError: true };
     }
     const identity = t.resource ? (t.resource.identity === "user" ? "as the person who asked" : `${t.resource.name} (agent identity)`) : "";
+    // the never-list comes before any rule or answer, and nothing in the app can change it
+    const never = neverByName(t.name, t.resource?.type) ?? (t.http ? neverHttpCall(t.http, args) : null);
+    if (never) {
+      appendToolCall(this.db, { agentId: ctx.agent.id, chatId: ctx.chatId, tool: name, args, asIdentity: identity, approval: `never allowed: ${never}`, status: "blocked" });
+      return { text: `Blocked: ${never}. No agent may do that here. Ask a person to do it.`, isError: true };
+    }
     let decision = this.decide(t, ctx.chatId);
     let approvalNote = decision === "allow" ? (t.category === "core" ? "" : "allowed by rule") : "";
     if (decision === "block") {
@@ -721,6 +750,7 @@ function connectionTools(c: any, gw: Gateway): ToolDef[] {
       name: `${slug(c.name)}_${verb.toLowerCase()}`,
       category: cat,
       resource,
+      http: { method: verb, base },
       description: `${verb} a path on ${c.name} (${host}).${cfg.hint ? " " + cfg.hint : ""}`,
       inputSchema: S({ path: str("path starting with /, may include a query string"), body: { type: "object", description: "JSON body" } }, ["path"]),
       run: async (a) => {
@@ -728,6 +758,8 @@ function connectionTools(c: any, gw: Gateway): ToolDef[] {
         if (!path.startsWith("/") || path.startsWith("//")) throw new Error("path must start with a single /");
         const url = new URL(base + path);
         if (url.host !== host) throw new Error("requests must stay on " + host);
+        const never = neverHttp(verb, url, a.body); // checked in call() too; this is the last line
+        if (never) throw new Error(`Blocked: ${never}`);
         const r = await fetch(url, {
           method: verb,
           headers: {
@@ -745,6 +777,19 @@ function connectionTools(c: any, gw: Gateway): ToolDef[] {
     return [tool("GET", "read"), tool("POST", "write"), tool("PUT", "write"), tool("PATCH", "write"), tool("DELETE", "danger")];
   }
   return [];
+}
+
+/** The never-list for an HTTP connection's call: the same address the tool would build. */
+function neverHttpCall(h: { method: string; base: string }, args: any): string | null {
+  const path = String(args?.path ?? "/");
+  if (!path.startsWith("/") || path.startsWith("//")) return null; // the tool refuses it anyway
+  let url: URL;
+  try {
+    url = new URL(h.base + path);
+  } catch {
+    return null;
+  }
+  return neverHttp(h.method, url, args?.body);
 }
 
 export function slug(s: string): string {

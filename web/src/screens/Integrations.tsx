@@ -84,7 +84,11 @@ export function slug(s: string): string {
       .slice(0, 30) || "app"
   );
 }
-function connTools(c: { app: string; name: string }): [string, string, Decision][] {
+// The server's decision for a tool with no rule (CIRCLECHAT_TOOL_DEFAULT), where it says.
+function connTools(c: { app: string; name: string; defaults?: Record<string, Decision> }): [string, string, Decision][] {
+  return connToolList(c).map(([t, label, d]) => [t, label, c.defaults?.[t] ?? d]);
+}
+function connToolList(c: { app: string; name: string }): [string, string, Decision][] {
   if (c.app === "github") return GH_TOOLS;
   const s = slug(c.name);
   return [
@@ -95,7 +99,7 @@ function connTools(c: { app: string; name: string }): [string, string, Decision]
     [`${s}_delete`, "DELETE", "block"],
   ];
 }
-function PolicyEditor({ tools, value, onChange }: { tools: [string, string, Decision][]; value: Record<string, Decision>; onChange: (v: Record<string, Decision>) => void }) {
+function PolicyEditor({ tools, value, onChange, never = [] }: { tools: [string, string, Decision][]; value: Record<string, Decision>; onChange: (v: Record<string, Decision>) => void; never?: string[] }) {
   return (
     <div className="group">
       {tools.map(([t, label, def]) => (
@@ -108,7 +112,7 @@ function PolicyEditor({ tools, value, onChange }: { tools: [string, string, Deci
               </code>
             </div>
           </div>
-          <Tri value={value[t] ?? def} onChange={(d) => onChange({ ...value, [t]: d })} />
+          {never.includes(t) ? <span className="small muted">Never: blocked for every agent</span> : <Tri value={value[t] ?? def} onChange={(d) => onChange({ ...value, [t]: d })} />}
         </div>
       ))}
     </div>
@@ -128,6 +132,9 @@ interface Connection {
   createdAt: number;
   grants: Grant[];
   policies: Record<string, Decision>;
+  /** the server's decision for each tool with no rule, and the tools on the never-list */
+  defaults?: Record<string, Decision>;
+  never?: string[];
 }
 
 function AppLogo({ app, preset, size = 40 }: { app: string; preset?: string; size?: number }) {
@@ -615,7 +622,7 @@ function AccessModal({ c, onClose }: { c: Connection; onClose: () => void }) {
       <label className="label" style={{ marginTop: 20 }}>
         What agents may do
       </label>
-      <PolicyEditor tools={connTools(c)} value={pol} onChange={setPol} />
+      <PolicyEditor tools={connTools(c)} value={pol} onChange={setPol} never={c.never} />
     </Modal>
   );
 }

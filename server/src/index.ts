@@ -21,10 +21,13 @@ import { getSetting } from "./db.ts";
 import { egressConfigFromEnv, ensureEgress } from "./agents/egress.ts";
 import { allowedSandboxes } from "./agents/sandboxes.ts";
 import { allowedOrigins } from "./origin.ts";
+import { toolDefault } from "./toolpolicy.ts";
 
 // fails here, before anything is written, on a sandbox name it doesn't know
 const sandboxes = allowedSandboxes();
 if (!sandboxes.has("local")) console.log("Sandboxes: docker only. Agents never run as a process on the server.");
+// and on a tool default it doesn't know
+if (toolDefault() === "block") console.log("Tools: a connected app's tool with no rule is blocked (CIRCLECHAT_TOOL_DEFAULT=block).");
 // fails here too, on an address it can't read
 const origins = allowedOrigins();
 console.log(

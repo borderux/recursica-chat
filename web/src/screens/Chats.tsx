@@ -627,7 +627,7 @@ export async function decide(id: string, decision: "allow_once" | "allow_always"
 }
 
 function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
-  const { user, fail, go, toast } = useStore();
+  const { user, fail, go, toast, isAdmin } = useStore();
   const [busy, setBusy] = useState(false);
   const state = (m.meta.state as Approval["state"]) ?? ap?.state ?? "pending";
   const d = ap?.detail ?? {};
@@ -668,9 +668,11 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
             <button className="btn primary sm" disabled={busy} onClick={() => act("allow_once")}>
               Approve once
             </button>
-            <button className="btn sm" disabled={busy} onClick={() => act("allow_always")}>
-              {ap?.source === "acp" ? "Always for this agent" : "Always in this chat"}
-            </button>
+            {isAdmin && (
+              <button className="btn sm" disabled={busy} onClick={() => act("allow_always")}>
+                {ap?.source === "acp" ? "Always for this agent" : "Always in this chat"}
+              </button>
+            )}
             <button className="btn sm ghost" disabled={busy} onClick={() => act("deny")}>
               Deny
             </button>
