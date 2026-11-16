@@ -20,10 +20,18 @@ import { REPO_ROOT } from "./agents/engines.ts";
 import { getSetting } from "./db.ts";
 import { egressConfigFromEnv, ensureEgress } from "./agents/egress.ts";
 import { allowedSandboxes } from "./agents/sandboxes.ts";
+import { allowedOrigins } from "./origin.ts";
 
 // fails here, before anything is written, on a sandbox name it doesn't know
 const sandboxes = allowedSandboxes();
 if (!sandboxes.has("local")) console.log("Sandboxes: docker only. Agents never run as a process on the server.");
+// fails here too, on an address it can't read
+const origins = allowedOrigins();
+console.log(
+  origins
+    ? `Pages allowed to change anything: ${origins.join(", ")}`
+    : "CIRCLECHAT_PUBLIC_URL isn't set: only a loopback page on this server's own host and port may change anything (local development). Set it to the address people use.",
+);
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
 mkdirSync(dataDir, { recursive: true });
 const keyFile = join(dataDir, "master.key");

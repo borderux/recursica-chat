@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { App } from "./app.ts";
 import { buildApi, staticHandler } from "./api.ts";
 import { REPO_ROOT } from "./agents/engines.ts";
+import { allowedOrigins, originProblem } from "./origin.ts";
 
 function readBody(req: IncomingMessage, limit = 2_000_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -64,6 +65,13 @@ export function createHttpServer(app: App): HttpServer {
   const api = buildApi(app);
   const apiListener = getRequestListener(api.fetch);
   const serveStatic = staticHandler(join(REPO_ROOT, "web", "dist"));
+  // CIRCLECHAT_PUBLIC_URL (see origin.ts); a bad value stops the server here
+  const origins = allowedOrigins();
+  const refusal = (req: IncomingMessage, socket = false) =>
+    originProblem(
+      { method: req.method ?? "GET", socket, origin: req.headers.origin, secFetchSite: req.headers["sec-fetch-site"] as string | undefined, host: req.headers.host, cookie: req.headers.cookie },
+      origins,
+    );
 
   const server = createServer(async (req, res) => {
     const url = req.url ?? "/";
@@ -82,6 +90,10 @@ export function createHttpServer(app: App): HttpServer {
         res.writeHead(r.status, { "content-type": "text/plain" }).end(r.body);
         return;
       }
+      if (url.startsWith("/api/")) {
+        const no = refusal(req);
+        if (no) return void res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: no }));
+      }
       if (url.startsWith("/api/") || url === "/sso" || url.startsWith("/sso?")) return apiListener(req, res);
       if (url === "/healthz") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
       const f = serveStatic(url);
@@ -99,6 +111,8 @@ export function createHttpServer(app: App): HttpServer {
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     if (!req.url?.startsWith("/ws")) return socket.destroy();
+    // the socket shows everything the signed-in person can see, so it gets the same check
+    if (refusal(req, true)) return socket.destroy();
     const cookie = req.headers.cookie ?? "";
     const tok = /(?:^|;\s*)cc_session=([^;]+)/.exec(cookie)?.[1] ?? new URL(req.url, "http://x").searchParams.get("token") ?? "";
     const s = app.db.prepare("SELECT user_id, expires_at FROM sessions WHERE token = ?").get(tok) as any;

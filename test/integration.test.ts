@@ -333,14 +333,14 @@ test("memory: pause, forget, restore", async () => {
 test("websocket pushes only what a user may see", async () => {
   const chat = await dm(pip.id);
   const events: any[] = [];
-  const ws = new WebSocket(h.url.replace("http", "ws") + "/ws", { headers: { cookie: c.cookie } });
+  const ws = new WebSocket(h.url.replace("http", "ws") + "/ws", { headers: { origin: h.url, cookie: c.cookie } });
   await new Promise((r, j) => { ws.on("open", r); ws.on("error", j); });
   ws.on("message", (d) => events.push(JSON.parse(String(d))));
   // maya isn't in tash's DM
   const maya = new Client(h.url);
   await maya.post("/api/login", { email: "maya@lumen.test", password: "maya-password-1" });
   const mevents: any[] = [];
-  const mws = new WebSocket(h.url.replace("http", "ws") + "/ws", { headers: { cookie: maya.cookie } });
+  const mws = new WebSocket(h.url.replace("http", "ws") + "/ws", { headers: { origin: h.url, cookie: maya.cookie } });
   await new Promise((r) => mws.on("open", r));
   mws.on("message", (d) => mevents.push(JSON.parse(String(d))));
   const m = await say(chat.id, "ws test");
