@@ -228,7 +228,7 @@ export async function exportWorkspace(app: App): Promise<{ stream: ReadableStrea
   if (existsSync(agentsDir)) cpSync(agentsDir, join(root, "agents"), { recursive: true, dereference: false, filter: (src) => !/\/node_modules(\/|$)/.test(src) });
   writeFileSync(
     join(root, "README.txt"),
-    "CircleChat workspace export.\n\nworkspace.json: all chats, messages, tasks, memories, agents, people and settings as JSON.\n" +
+    "RecursicaChat workspace export.\n\nworkspace.json: all chats, messages, tasks, memories, agents, people and settings as JSON.\n" +
       "circlechat.db: a copy of the SQLite database. Stored keys stay encrypted.\nagents/: each agent's home folder.\n",
   );
   const tar = spawn("tar", ["-czf", "-", "-C", dir, "circlechat-export"], { stdio: ["ignore", "pipe", "pipe"] });
