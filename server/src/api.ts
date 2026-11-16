@@ -9,6 +9,7 @@ import { now, getSetting, setSetting, json } from "./db.ts";
 import { id, token, hashPassword, verifyPassword } from "./crypto.ts";
 import { verifyChain } from "./toollog.ts";
 import { ENGINES, agentDirs } from "./agents/engines.ts";
+import { sandboxProblem } from "./agents/sandboxes.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -297,7 +298,8 @@ export function buildApi(app: App): Hono<Env> {
       out.autonomy = b.autonomy;
     }
     if (b.sandbox !== undefined) {
-      if (!["docker", "local"].includes(b.sandbox)) throw bad("sandbox must be docker or local");
+      const problem = sandboxProblem(b.sandbox);
+      if (problem) throw bad(problem);
       out.sandbox = b.sandbox;
     }
     if (b.budgetCents !== undefined) out.budget_cents = Math.max(0, Math.round(Number(b.budgetCents) || 0));
@@ -426,6 +428,8 @@ export function buildApi(app: App): Hono<Env> {
         .slice(0, 30) || "imported";
     if (MENTION_ALL.has(handle)) throw bad(`@${handle} is kept for mentioning every agent in a chat. Pick another handle.`);
     if (svc.agent(handle)) throw bad(`@${handle} is taken`);
+    const problem = sandboxProblem(b.sandbox ?? "docker");
+    if (problem) throw bad(problem);
     const aid = id("a_");
     db.prepare(
       `INSERT INTO agents(id, handle, name, role_title, style, colour, engine, model, instructions, autonomy, sandbox, email, created_by, created_at)
