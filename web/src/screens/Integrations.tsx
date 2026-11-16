@@ -1024,7 +1024,7 @@ export function Triggers({ id }: { id?: string }) {
         )}
       </div>
       <p className="muted" style={{ marginTop: 4 }}>
-        Things outside CircleChat can wake an agent: webhooks and schedules.
+        Things outside RecursicaChat can wake an agent: webhooks and schedules.
       </p>
       <div className="col" style={{ gap: 10, marginTop: 20 }}>
         {list.length === 0 && (

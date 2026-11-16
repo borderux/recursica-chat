@@ -472,7 +472,7 @@ function Bubble({ m, first, last, mine, dm, approvals }: { m: Message; first: bo
   const agentId = m.authorType === "agent" ? m.authorId : ap?.agentId;
   const a = agentId ? agent(agentId) : undefined;
   const u = m.authorType === "user" ? user(m.authorId) : undefined;
-  const name = a ? a.name : u ? u.name : "CircleChat";
+  const name = a ? a.name : u ? u.name : "RecursicaChat";
   const showName = first && !mine && !(dm && a) && m.kind === "text";
   const av = a ? <AgentAv a={a} size={40} dot={false} onClick={() => go(`/agents/${a.id}`)} /> : u ? <UserAv u={u} size={40} /> : <span className="spacer" />;
   let content: ReactNode;

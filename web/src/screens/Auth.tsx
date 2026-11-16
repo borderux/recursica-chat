@@ -30,8 +30,7 @@ export function AuthScreen({ setup, workspace, hosted, onDone }: { setup: boolea
     <div className="center-card">
       <div style={{ padding: "28px 56px", display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <div className="logo" style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 16 }}>
-          <span className="logo-mark" />
-          CircleChat
+          <span className="wordmark">RecursicaChat</span>
         </div>
         <form onSubmit={submit} style={{ margin: "auto 0", maxWidth: 420, width: "100%" }} className="form">
           <div>
@@ -109,9 +108,9 @@ export function AuthScreen({ setup, workspace, hosted, onDone }: { setup: boolea
             {setup ? "Create workspace" : "Sign in"}
             <Icon n="arrow" />
           </button>
-          <p className="small muted">{setup ? "Your server, your data." : `${workspace || "CircleChat"} · your server, your data`}</p>
+          <p className="small muted">{setup ? "Your server, your data." : `${workspace || "RecursicaChat"} · your server, your data`}</p>
         </form>
-        <p className="small muted">{hosted ? "CircleChat 2.0 · hosted by CircleChat Cloud in the EU · open source (AGPL-3.0)" : "CircleChat 2.0 · self-hosted · open source (AGPL-3.0)"}</p>
+        <p className="small muted">{hosted ? "RecursicaChat · built on CircleChat 2.0 · hosted by CircleChat Cloud in the EU · open source (AGPL-3.0)" : "RecursicaChat · built on CircleChat 2.0 · self-hosted · open source (AGPL-3.0)"}</p>
       </div>
       <div className="side" style={{ background: "linear-gradient(180deg,#F4F5F8,#EEF0F6)", margin: 12, borderRadius: 18, display: "grid", placeItems: "center" }}>
         <div style={{ width: 400, display: "flex", flexDirection: "column", gap: 6 }}>

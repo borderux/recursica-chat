@@ -1,32 +1,16 @@
-# Dependency updates as pull requests. A new version must be out for 7 days before
-# it is proposed, so a bad or hijacked release has time to be pulled first.
-# (Cool-down idea from Borderux's CircleChat fork.)
+# Dependabot version updates: daily, with a 7-day cooldown, one pull request per package system.
+# Only GitHub Actions: CircleChat's own Dependabot updates the npm workspaces (server, web, desktop)
+# and the egress image, and those updates arrive when CircleChat's main is merged in.
+# Security updates skip the cooldown.
 version: 2
 updates:
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        update-types: [minor, patch]
-    labels: [dependencies]
-
   - package-ecosystem: github-actions
     directory: /
+    target-branch: recursica/main
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 7
-    labels: [dependencies]
-
-  - package-ecosystem: docker
-    directory: /egress
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    labels: [dependencies]
+    groups:
+      github-actions:
+        patterns: ["*"]

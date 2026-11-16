@@ -124,7 +124,7 @@ export function SearchScreen({ q: initial }: { q: string }) {
                 {r.messages.map((m) => {
                   const c = chat(m.chatId);
                   const a = m.authorType === "agent" ? agent(m.authorId) : undefined;
-                  const who = a ? a.name : m.authorType === "user" ? (m.authorId === me.id ? "You" : (user(m.authorId)?.name ?? "someone")) : "CircleChat";
+                  const who = a ? a.name : m.authorType === "user" ? (m.authorId === me.id ? "You" : (user(m.authorId)?.name ?? "someone")) : "RecursicaChat";
                   return (
                     <div key={m.id} className="it" style={{ alignItems: "flex-start", cursor: "pointer" }} onClick={() => go(`/chats/${m.chatId}`)}>
                       {a ? (
