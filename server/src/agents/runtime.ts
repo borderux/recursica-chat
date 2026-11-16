@@ -552,7 +552,7 @@ export class AgentWorker {
         auto: "Work on your own. Rules set by admins still apply.",
       }[a.autonomy];
       parts.push(
-        `You are ${a.name} (@${a.handle}), ${a.roleTitle || "an agent"} in the "${this.rt.opts.workspaceName()}" team on CircleChat, a group chat where people and AI agents work together.`,
+        `You are ${a.name} (@${a.handle}), ${a.roleTitle || "an agent"} in the "${this.rt.opts.workspaceName()}" team on RecursicaChat, a group chat where people and AI agents work together.`,
         a.instructions ? `How you work:\n${a.instructions}` : "",
         [
           "Rules:",

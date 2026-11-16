@@ -154,7 +154,7 @@ function Shell({ rail, children }: { rail: string; children: ReactNode }) {
   return (
     <div className="app-root">
       <RailFrame>
-        <span className="logo-mark" style={{ cursor: "pointer" }} onClick={() => go("/chats")} />
+        <span className="wordmark rail-wordmark" title="RecursicaChat" style={{ cursor: "pointer" }} onClick={() => go("/chats")}>Recursica<br />Chat</span>
         {item("chats", "chat", "Chats", "/chats", unread)}
         {item("needs", "inbox", "Needs you", "/needs", pending.length)}
         {item("tasks", "board", "Tasks", "/tasks")}

@@ -15,7 +15,7 @@ function open() {
   const cfg = load();
   win = new BrowserWindow({
     width: cfg.bounds?.width ?? 1360, height: cfg.bounds?.height ?? 900, x: cfg.bounds?.x, y: cfg.bounds?.y,
-    minWidth: 980, minHeight: 640, title: "CircleChat", backgroundColor: "#F4F5F8",
+    minWidth: 980, minHeight: 640, title: "RecursicaChat", backgroundColor: "#F4F5F8",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true },
   });

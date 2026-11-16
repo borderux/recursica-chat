@@ -1,5 +1,6 @@
 {
   "name": "@circlechat/desktop",
+  "productName": "RecursicaChat",
   "private": true,
   "version": "2.0.0-dev",
   "license": "AGPL-3.0-only",

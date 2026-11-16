@@ -631,7 +631,7 @@ export function WatchScreen({ id }: { id: string }) {
   const paused = s.state === "stopped" || s.state === "sleeping" || s.state === "crashed";
   const c = s.chatId ? chat(s.chatId) : undefined;
   const lastUsage = [...entries].reverse().find((e) => e.kind === "usage");
-  const from = (d: Delivery) => (d.fromType === "user" ? (user(d.fromId)?.name ?? "someone") : d.fromType === "agent" ? (agent(d.fromId)?.name ?? "agent") : d.fromType === "trigger" ? d.fromId : "CircleChat");
+  const from = (d: Delivery) => (d.fromType === "user" ? (user(d.fromId)?.name ?? "someone") : d.fromType === "agent" ? (agent(d.fromId)?.name ?? "agent") : d.fromType === "trigger" ? d.fromId : "RecursicaChat");
 
   return (
     <div className="main solo">

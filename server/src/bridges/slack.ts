@@ -62,7 +62,7 @@ export class SlackBridge {
       if (e.type !== "message" || e.chatId !== this.cfg.chatId) return;
       const m: any = e.message;
       if (m.meta?.source === "slack" || m.kind === "approval") return;
-      const name = m.authorType === "agent" ? this.agentName(m.authorId) : m.authorType === "system" ? "CircleChat" : (m.meta?.displayName ?? "CircleChat");
+      const name = m.authorType === "agent" ? this.agentName(m.authorId) : m.authorType === "system" ? "RecursicaChat" : (m.meta?.displayName ?? "RecursicaChat");
       void this.api("chat.postMessage", { channel: this.cfg.channel, text: m.body, username: name, unfurl_links: false }).catch(() => {});
     });
     await this.connect();

@@ -60,7 +60,7 @@ export class App {
       idleSleepMs: cfg.idleSleepMs ?? 15 * 60_000,
       turnTimeoutMs: cfg.turnTimeoutMs ?? 20 * 60_000,
       providers: () => this.providers(true) as ModelProvider[],
-      workspaceName: () => getSetting(this.db, "workspace_name") ?? "CircleChat",
+      workspaceName: () => getSetting(this.db, "workspace_name") ?? "RecursicaChat",
     });
     this.runtime.approvalTtlMs = cfg.approvalTtlMs;
     this.triggers = new Triggers(this.db, this.svc);

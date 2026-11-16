@@ -90,7 +90,7 @@ function Server() {
     <div className="page">
       <h2 className="h2">Server</h2>
       <p className="muted" style={{ marginTop: 4 }}>
-        CircleChat {version} · {location.host}
+        RecursicaChat {version} · {location.host}
       </p>
       <div className="sect">Workspace</div>
       <div className="group">
