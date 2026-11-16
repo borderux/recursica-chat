@@ -139,6 +139,14 @@ Defaults, when you have not set a policy:
 | Dangerous (DELETE, merge, delete branch) | Block |
 | MCP tools | Off until reviewed |
 
+With `CIRCLECHAT_TOOL_DEFAULT=block`, a connected app's tool with no policy is blocked, whatever its kind, and an admin allows each tool on purpose. CircleChat's own tools stay allowed, and MCP tools stay off until reviewed.
+
+Who decides, and what nobody can change:
+
+- Only owners and admins set a tool's policy, and only they can answer **Always** on an approval card. Anyone who may answer can still approve once or deny.
+- A Block, or an Off, always outranks an earlier **Always in this chat**: blocking a tool blocks it in every chat.
+- The never-list is checked before any policy or answer, and nothing in the app changes it, not even an admin: the GitHub app's `github_merge_pull_request` and `github_delete_branch`; the same actions from an MCP server under GitHub's MCP names (`merge_pull_request`, `delete_branch`); and an HTTP connection's calls to `api.github.com` that merge (`PUT /repos/*/pulls/*/merge`, `POST /repos/*/merges`), delete a branch or tag (`DELETE /repos/*/git/refs/*`) or delete a repository (`DELETE /repos/*`), or the GraphQL mutations that do the same. The list matches names and addresses, so an action offered under another name isn't caught: protect the repositories on GitHub too.
+
 ### Approvals
 
 An approval card has three answers:

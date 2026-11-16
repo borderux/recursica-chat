@@ -89,7 +89,7 @@ export function NeedsScreen({ id }: { id?: string }) {
 }
 
 function Detail({ ap }: { ap: Approval }) {
-  const { agent, chat, user, go, fail, toast } = useStore();
+  const { agent, chat, user, go, fail, toast, isAdmin } = useStore();
   const [busy, setBusy] = useState(false);
   const a = agent(ap.agentId);
   const c = chat(ap.chatId);
@@ -187,9 +187,11 @@ function Detail({ ap }: { ap: Approval }) {
             <button className="btn primary lg grow" disabled={busy} onClick={() => act("allow_once")}>
               Approve once
             </button>
-            <button className="btn lg grow" disabled={busy} onClick={() => act("allow_always")}>
-              {ap.source === "acp" ? "Always for this agent" : c ? `Always in ${chatTitle(c, agent)}` : "Always in this chat"}
-            </button>
+            {isAdmin && (
+              <button className="btn lg grow" disabled={busy} onClick={() => act("allow_always")}>
+                {ap.source === "acp" ? "Always for this agent" : c ? `Always in ${chatTitle(c, agent)}` : "Always in this chat"}
+              </button>
+            )}
             <button className="btn lg ghost" disabled={busy} onClick={() => act("deny")}>
               Deny
             </button>

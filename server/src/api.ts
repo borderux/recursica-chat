@@ -10,6 +10,7 @@ import { id, token, hashPassword, verifyPassword } from "./crypto.ts";
 import { verifyChain } from "./toollog.ts";
 import { ENGINES, agentDirs } from "./agents/engines.ts";
 import { sandboxProblem } from "./agents/sandboxes.ts";
+import { neverByName } from "./toolpolicy.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -545,6 +546,8 @@ export function buildApi(app: App): Hono<Env> {
     const b = await c.req.json();
     const decision = String(b.decision);
     if (!["allow_once", "allow_always", "deny"].includes(decision)) throw bad("decision must be allow_once, allow_always or deny");
+    // "Always" saves a rule for the chat, so like any rule it is an admin's call
+    if (decision === "allow_always" && RANK[u.role] < RANK.admin) throw new HttpError(403, "Only admins can answer Always. Approve this once, or ask an admin.");
     const out = svc.decideApproval(ap.id, decision === "deny" ? "denied" : "approved", decision, u.id, String(b.reason ?? "").slice(0, 500));
     // reflect the answer on the approval card in chat
     const card = db.prepare("SELECT id FROM messages WHERE kind = 'approval' AND json_extract(meta, '$.approvalId') = ?").get(ap.id) as any;
@@ -649,6 +652,8 @@ export function buildApi(app: App): Hono<Env> {
     createdAt: r.created_at,
     grants: gateway.grants("connection", r.id),
     policies: gateway.policies("connection", r.id),
+    // what each tool gets with no rule (CIRCLECHAT_TOOL_DEFAULT), and the tools no rule can allow
+    ...gateway.connectionDefaults(r),
   });
   // The app catalog for Settings > Apps (no secrets, no code: just what the form needs)
   api.get("/api/apps/catalog", (c) =>
@@ -728,10 +733,12 @@ export function buildApi(app: App): Hono<Env> {
     return c.json({ connection: connOut(r) });
   });
   api.put("/api/connections/:id/policies", async (c) => {
-    requireRole(c.get("user"), "builder");
+    requireRole(c.get("user"), "admin"); // what agents may do with an app is an admin's call
     const r = db.prepare("SELECT * FROM connections WHERE id = ?").get(c.req.param("id")) as any;
     if (!r) throw new HttpError(404, "not found");
-    for (const [tool, d] of Object.entries((await c.req.json()).policies ?? {}))
+    const policies = Object.entries((await c.req.json()).policies ?? {});
+    for (const [tool, d] of policies) if (d !== "block" && neverByName(tool, "connection")) throw bad(`${tool} is on the never-list: no rule can allow it.`);
+    for (const [tool, d] of policies)
       if (["allow", "ask", "block"].includes(String(d))) gateway.setPolicy("connection", r.id, tool, d as any);
     return c.json({ connection: connOut(r) });
   });
@@ -875,10 +882,12 @@ export function buildApi(app: App): Hono<Env> {
     return c.json({ server: mcpOut(r) });
   });
   api.put("/api/mcp/:id/policies", async (c) => {
-    requireRole(c.get("user"), "builder");
+    requireRole(c.get("user"), "admin"); // what agents may do with a server is an admin's call
     const r = db.prepare("SELECT * FROM mcp_servers WHERE id = ?").get(c.req.param("id")) as any;
     if (!r) throw new HttpError(404, "not found");
-    for (const [tool, d] of Object.entries((await c.req.json()).policies ?? {}))
+    const policies = Object.entries((await c.req.json()).policies ?? {});
+    for (const [tool, d] of policies) if (d !== "block" && d !== "off" && neverByName(tool, "mcp")) throw bad(`${tool} is on the never-list: no rule can allow it.`);
+    for (const [tool, d] of policies)
       if (["allow", "ask", "block", "off"].includes(String(d))) gateway.setPolicy("mcp", r.id, tool, d as any);
     return c.json({ server: mcpOut(r) });
   });
