@@ -4,8 +4,19 @@ import { useState, type CSSProperties, type FormEvent } from "react";
 import { api } from "../api.ts";
 import { Blob, Icon } from "../ui/ui.tsx";
 
-export function AuthScreen({ setup, workspace, hosted, onDone }: { setup: boolean; workspace: string; hosted?: { signInUrl: string } | null; onDone: () => void }) {
-  const expired = new URLSearchParams(location.search).get("signin") === "expired";
+// Why a sign-in with Google came back refused (/?signin=google-<reason>), in plain words.
+const GOOGLE_REFUSED: Record<string, string> = {
+  "no-account": "That Google account isn't an owner or admin of this workspace.",
+  domain: "That Google account isn't in this workspace's domain.",
+  "email-not-verified": "That Google account's email address isn't verified.",
+  cancelled: "Sign-in with Google was cancelled.",
+};
+
+export function AuthScreen({ setup, workspace, hosted, google, passwordSignIn = "all", onDone }: { setup: boolean; workspace: string; hosted?: { signInUrl: string } | null; google?: boolean; passwordSignIn?: "all" | "members" | "off"; onDone: () => void }) {
+  const signin = new URLSearchParams(location.search).get("signin") ?? "";
+  const expired = signin === "expired";
+  const googleRefused = signin.startsWith("google-") ? (GOOGLE_REFUSED[signin.slice(7)] ?? "Sign-in with Google didn't work. Try again.") : "";
+  const passwords = setup || passwordSignIn !== "off";
   const [f, setF] = useState({ workspace: "", name: "", email: "", password: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -80,6 +91,22 @@ export function AuthScreen({ setup, workspace, hosted, onDone }: { setup: boolea
               <p className="small muted" style={{ textAlign: "center" }}>or with this workspace's own password</p>
             </>
           )}
+          {google && !setup && (
+            <>
+              <a className="btn primary lg" style={{ width: "100%", textDecoration: "none" }} href="/auth/google/start">
+                Sign in with Google
+                <Icon n="arrow" />
+              </a>
+              {googleRefused && <div className="err-msg">{googleRefused}</div>}
+              {passwords && (
+                <p className="small muted" style={{ textAlign: "center" }}>
+                  {passwordSignIn === "members" ? "Members: or with your password" : "or with your password"}
+                </p>
+              )}
+            </>
+          )}
+          {passwords && (
+          <>
           <div>
             <label className="label" htmlFor="em">
               Email
@@ -104,10 +131,12 @@ export function AuthScreen({ setup, workspace, hosted, onDone }: { setup: boolea
           </div>
           {expired && !err && <div className="err-msg">That sign-in link has expired. Sign in again.</div>}
           {err && <div className="err-msg">{err}</div>}
-          <button className={`btn ${hosted && !setup ? "" : "primary "}lg`} style={{ width: "100%" }} disabled={busy}>
+          <button className={`btn ${(hosted || google) && !setup ? "" : "primary "}lg`} style={{ width: "100%" }} disabled={busy}>
             {setup ? "Create workspace" : "Sign in"}
             <Icon n="arrow" />
           </button>
+          </>
+          )}
           <p className="small muted">{setup ? "Your server, your data." : `${workspace || "RecursicaChat"} · your server, your data`}</p>
         </form>
         <p className="small muted">{hosted ? "RecursicaChat · built on CircleChat 2.0 · hosted by CircleChat Cloud in the EU · open source (AGPL-3.0)" : "RecursicaChat · built on CircleChat 2.0 · self-hosted · open source (AGPL-3.0)"}</p>
