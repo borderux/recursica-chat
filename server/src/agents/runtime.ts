@@ -18,6 +18,7 @@ import { appendToolCall } from "../toollog.ts";
 import { ModelProxy } from "./modelproxy.ts";
 import { egressDockerArgs, type Egress } from "./egress.ts";
 import { startProblem } from "./sandboxes.ts";
+import { dockerEnv } from "./dockerenv.ts";
 import { looksLikeTextToolCall, TOOL_CALL_REMINDER } from "./textcall.ts";
 
 const execFileP = promisify(execFile);
@@ -190,7 +191,9 @@ export class AgentWorker {
       for (let i = 0; this.rt.egressPending && i < 600; i++) await new Promise((r) => setTimeout(r, 1000));
       if (this.rt.egressPending) throw new Error("agent network limits are still being set up");
       this.containerName = `cc-${a.handle}-${Math.random().toString(36).slice(2, 7)}`;
-      const envArgs = Object.entries({ HOME: "/home/agent", ...spec.env }).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+      // the engine's settings reach the container by name; their values never appear in arguments
+      const agentEnv = dockerEnv({ HOME: "/home/agent" }, spec.env ?? {});
+      const envArgs = agentEnv.args;
       const args = [
         "run",
         "-i",
@@ -226,7 +229,7 @@ export class AgentWorker {
         spec.command,
         ...spec.args,
       ];
-      proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
+      proc = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...agentEnv.env } }) as ChildProcessWithoutNullStreams;
     } else {
       proc = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
