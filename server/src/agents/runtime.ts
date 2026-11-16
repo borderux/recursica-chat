@@ -17,6 +17,7 @@ import type { Bus, AgentStatus, ActivityEntry, AgentState } from "../bus.ts";
 import { appendToolCall } from "../toollog.ts";
 import { ModelProxy } from "./modelproxy.ts";
 import { egressDockerArgs, type Egress } from "./egress.ts";
+import { startProblem } from "./sandboxes.ts";
 import { looksLikeTextToolCall, TOOL_CALL_REMINDER } from "./textcall.ts";
 
 const execFileP = promisify(execFile);
@@ -158,6 +159,8 @@ export class AgentWorker {
     const a = this.agent();
     const engine = engineById(a.engine);
     if (!engine) throw new Error(`unknown engine ${a.engine}`);
+    const refused = startProblem(a.sandbox, engine);
+    if (refused) throw new Error(refused);
     this.setState("starting", `starting ${engine.name}`);
     this.stopping = false;
     const { home, work } = agentDirs(this.rt.opts.dataDir, a.id);

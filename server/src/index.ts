@@ -19,7 +19,11 @@ import { applySeedFile, resolveListenAddress } from "./hosting.ts";
 import { REPO_ROOT } from "./agents/engines.ts";
 import { getSetting } from "./db.ts";
 import { egressConfigFromEnv, ensureEgress } from "./agents/egress.ts";
+import { allowedSandboxes } from "./agents/sandboxes.ts";
 
+// fails here, before anything is written, on a sandbox name it doesn't know
+const sandboxes = allowedSandboxes();
+if (!sandboxes.has("local")) console.log("Sandboxes: docker only. Agents never run as a process on the server.");
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
 mkdirSync(dataDir, { recursive: true });
 const keyFile = join(dataDir, "master.key");
