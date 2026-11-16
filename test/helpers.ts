@@ -53,7 +53,8 @@ export class Client {
   async req(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
     const r = await fetch(this.base + path, {
       method,
-      headers: { "content-type": "application/json", ...(this.cookie ? { cookie: this.cookie } : {}) },
+      // like a browser on the app's own page: state-changing requests carry the page's Origin
+      headers: { "content-type": "application/json", origin: new URL(this.base).origin, ...(this.cookie ? { cookie: this.cookie } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const sc = r.headers.get("set-cookie");
