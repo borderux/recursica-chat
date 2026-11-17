@@ -21,6 +21,8 @@ interface Boot {
   user: User | null;
   version: string;
   hosted?: { signInUrl: string } | null;
+  google?: boolean;
+  passwordSignIn?: "all" | "members" | "off";
 }
 
 export function App() {
@@ -55,7 +57,7 @@ export function App() {
     return (
       <>
         <Sprite />
-        <AuthScreen setup={boot.setupNeeded} workspace={boot.workspace} hosted={boot.hosted ?? null} onDone={load} />
+        <AuthScreen setup={boot.setupNeeded} workspace={boot.workspace} hosted={boot.hosted ?? null} google={!!boot.google} passwordSignIn={boot.passwordSignIn ?? "all"} onDone={load} />
       </>
     );
   return (

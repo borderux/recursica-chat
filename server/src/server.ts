@@ -94,7 +94,7 @@ export function createHttpServer(app: App): HttpServer {
         const no = refusal(req);
         if (no) return void res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: no }));
       }
-      if (url.startsWith("/api/") || url === "/sso" || url.startsWith("/sso?")) return apiListener(req, res);
+      if (url.startsWith("/api/") || url === "/sso" || url.startsWith("/sso?") || url.startsWith("/auth/google/")) return apiListener(req, res);
       if (url === "/healthz") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
       const f = serveStatic(url);
       if (!f) return void res.writeHead(404, { "content-type": "text/plain" }).end("Web app not built. Run: npm run build");

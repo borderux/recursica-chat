@@ -22,6 +22,7 @@ import { egressConfigFromEnv, ensureEgress } from "./agents/egress.ts";
 import { allowedSandboxes } from "./agents/sandboxes.ts";
 import { allowedOrigins } from "./origin.ts";
 import { toolDefault } from "./toolpolicy.ts";
+import { googleConfig, passwordSignIn, readClientSecret } from "./google.ts";
 
 // fails here, before anything is written, on a sandbox name it doesn't know
 const sandboxes = allowedSandboxes();
@@ -30,6 +31,11 @@ if (!sandboxes.has("local")) console.log("Sandboxes: docker only. Agents never r
 if (toolDefault() === "block") console.log("Tools: a connected app's tool with no rule is blocked (CIRCLECHAT_TOOL_DEFAULT=block).");
 // fails here too, on an address it can't read
 const origins = allowedOrigins();
+// and on sign-in settings that don't fit, or a client secret file it can't use
+const google = googleConfig();
+if (google) readClientSecret(google.secretFile);
+const passwords = passwordSignIn();
+console.log(google ? `Sign-in with Google: on for owners and admins${google.domain ? ` of ${google.domain}` : ""}. Passwords: ${passwords}.` : "Sign-in with Google: off.");
 console.log(
   origins
     ? `Pages allowed to change anything: ${origins.join(", ")}`

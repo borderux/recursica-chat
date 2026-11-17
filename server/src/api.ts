@@ -11,6 +11,7 @@ import { verifyChain } from "./toollog.ts";
 import { ENGINES, agentDirs } from "./agents/engines.ts";
 import { sandboxProblem } from "./agents/sandboxes.ts";
 import { neverByName } from "./toolpolicy.ts";
+import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } from "./google.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -104,6 +105,7 @@ export function buildApi(app: App): Hono<Env> {
     setCookie(c, "cc_session", t, { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 30 * 86400, secure: isHttps(c) });
     return t;
   };
+  registerGoogleSignIn(api, { db, login, isHttps });
   const requireRole = (u: User, role: Role) => {
     if (RANK[u.role] < RANK[role]) throw new HttpError(403, `Only ${role}s and above can do that`);
   };  // What a person may see: chats they're in, plus the visible agents-only chats. Admins see everything.
@@ -123,6 +125,9 @@ export function buildApi(app: App): Hono<Env> {
       version: "2.0.0",
       // hosted installs: where to sign in (the control plane), never the secret
       hosted: h ? { signInUrl: `${h.consoleUrl}/login` } : null,
+      // sign-in with Google (owners and admins), and who may still use a password
+      google: !!googleConfig(),
+      passwordSignIn: passwordSignIn(),
     });
   });
 
@@ -177,6 +182,9 @@ export function buildApi(app: App): Hono<Env> {
       throw new HttpError(401, "Wrong email or password");
     }
     loginLimiter.clear(`acct:${email}`);
+    // checked after the password, so the answer tells a role only to someone who knows it
+    const refused = passwordRefusal(r.role);
+    if (refused) throw new HttpError(403, refused);
     login(c, r.id);
     return c.json({ user: userById(r.id) });
   });
