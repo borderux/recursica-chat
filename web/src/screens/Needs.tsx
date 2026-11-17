@@ -89,7 +89,7 @@ export function NeedsScreen({ id }: { id?: string }) {
 }
 
 function Detail({ ap }: { ap: Approval }) {
-  const { agent, chat, user, go, fail, toast, isAdmin } = useStore();
+  const { agent, chat, user, go, fail, toast, isAdmin, who } = useStore();
   const [busy, setBusy] = useState(false);
   const a = agent(ap.agentId);
   const c = chat(ap.chatId);
@@ -105,7 +105,7 @@ function Detail({ ap }: { ap: Approval }) {
       setBusy(false);
     }
   };
-  const requester = d.requester?.type === "user" ? user(d.requester.id)?.name : d.requester?.type === "agent" ? agent(d.requester.id)?.name : "";
+  const requester = d.requester?.type === "user" ? who(d.requester.id) : d.requester?.type === "agent" ? agent(d.requester.id)?.name : "";
   const msLeft = Math.max(0, ap.expiresAt - Date.now());
   const hoursLeft = Math.round(msLeft / 3600_000);
   const minsLeft = Math.max(1, Math.round(msLeft / 60_000));
@@ -204,7 +204,7 @@ function Detail({ ap }: { ap: Approval }) {
         <div style={{ marginTop: 22 }}>
           <span className={`status ${ap.state === "approved" ? "done" : ap.state === "denied" ? "blocked" : "sleeping"}`}>
             <Icon n={ap.state === "approved" ? "check" : "x"} />
-            {decisionText(ap, (id) => user(id)?.name ?? "someone")}
+            {decisionText(ap, who)}
           </span>
         </div>
       )}

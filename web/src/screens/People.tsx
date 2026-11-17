@@ -14,7 +14,7 @@ const ROLE_HINT: Record<Role, string> = {
 };
 
 export function PeopleScreen() {
-  const { agents, users, me, go, isAdmin, isBuilder, fail, reloadUsers, toast } = useStore();
+  const { agents, users, me, go, isAdmin, isBuilder, fail, reloadUsers, toast, who } = useStore();
   const [adding, setAdding] = useState(false);
   const setRole = async (id: string, role: Role) => {
     try {
@@ -71,14 +71,14 @@ export function PeopleScreen() {
               <div key={u.id} className="it">
                 <UserAv u={u} dot={u.id === me.id} />
                 <div className="grow">
-                  <b style={{ fontWeight: 600 }}>{u.name}</b>
+                  <b style={{ fontWeight: 600 }}>{who(u.id)}</b>
                   <div className="small muted">
                     {u.email}
                     {u.id === me.id ? " · you" : ""}
                   </div>
                 </div>
                 {isAdmin && u.role !== "owner" && u.id !== me.id ? (
-                  <select className="input sm" style={{ width: 150 }} value={u.role} onChange={(e) => setRole(u.id, e.target.value as Role)} aria-label={`Role for ${u.name}`}>
+                  <select className="input sm" style={{ width: 150 }} value={u.role} onChange={(e) => setRole(u.id, e.target.value as Role)} aria-label={`Role for ${who(u.id)}`}>
                     {(["admin", "builder", "member"] as Role[]).map((r) => (
                       <option key={r} value={r}>
                         {ROLE_NAMES[r]}

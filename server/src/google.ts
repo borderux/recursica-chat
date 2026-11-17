@@ -11,6 +11,9 @@
 // The redirect address is <first address in CIRCLECHAT_PUBLIC_URL>/auth/google/callback, so
 // CIRCLECHAT_PUBLIC_URL must be set too.
 //
+// The scope is openid email profile: profile adds the photo's address (`picture`), of which
+// profile.ts keeps a copy.
+//
 // The flow: authorization code with PKCE (S256), a state and a nonce. The state, nonce and code
 // verifier stay on the server, under a random id in a short-lived httpOnly cookie, and each flow
 // can be used once. Google's endpoints are fixed (no discovery, so nothing to steer elsewhere).
@@ -26,6 +29,7 @@ import { readFileSync, statSync } from "node:fs";
 import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { allowedOrigins } from "./origin.ts";
+import { refreshPhoto, type Db } from "./profile.ts";
 
 export type PasswordSignIn = "all" | "members" | "off";
 
@@ -131,7 +135,7 @@ interface Flow {
 }
 
 export interface GoogleDeps {
-  db: { prepare(sql: string): { get(...args: any[]): unknown } };
+  db: Db;
   /** signs the user in, and sets the session cookie */
   login(c: Context, uid: string): unknown;
   isHttps(c: Context): boolean;
@@ -163,7 +167,7 @@ export function registerGoogleSignIn(api: Hono<any>, deps: GoogleDeps): void {
       client_id: cfg.clientId,
       redirect_uri: cfg.redirectUri,
       response_type: "code",
-      scope: "openid email",
+      scope: "openid email profile",
       state: flow.state,
       nonce: flow.nonce,
       code_challenge: b64url(createHash("sha256").update(flow.verifier).digest()),
@@ -222,6 +226,8 @@ export function registerGoogleSignIn(api: Hono<any>, deps: GoogleDeps): void {
     if (!u || !(u.role === "owner" || u.role === "admin" || inDomain(email, cfg.domain))) return fail(c, "no-account");
     deleteCookie(c, FLOW_COOKIE, { path: "/auth/google" });
     deps.login(c, u.id);
+    // a copy of their Google photo (profile.ts): bounded in time, and it never stops the sign-in
+    await refreshPhoto(deps.db, u.id, claims.picture);
     return c.redirect("/", 302);
   });
 }

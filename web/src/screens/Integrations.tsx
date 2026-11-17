@@ -177,7 +177,7 @@ const GITHUB_TILE: CatalogApp = {
 };
 
 export function Apps() {
-  const { fail, toast, user, me, isBuilder } = useStore();
+  const { fail, toast, user, me, isBuilder, who } = useStore();
   const gname = useGrantName();
   const [list, setList] = useState<Connection[]>([]);
   const [connect, setConnect] = useState<false | "github" | "http">(false);
@@ -251,7 +251,7 @@ export function Apps() {
                   {c.app === "github" ? `GitHub${c.config.repos?.length ? ` · ${c.config.repos.join(", ")}` : ""}` : c.config.preset ? new URL(c.config.baseUrl).host : c.config.baseUrl}
                 </span>
                 <div className="small muted">
-                  as <b>{c.identity === "user" ? (c.ownerUserId === me.id ? "you" : (user(c.ownerUserId)?.name ?? "a person")) : "agents"}</b>
+                  as <b>{c.identity === "user" ? (c.ownerUserId === me.id ? "you" : who(c.ownerUserId)) : "agents"}</b>
                   {c.identity === "user" ? " · only on their own requests" : ""} · {grantSummary(c.grants, gname)}
                 </div>
                 <div className="badges">

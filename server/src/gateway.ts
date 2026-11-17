@@ -18,6 +18,7 @@ import { appendToolCall } from "./toollog.ts";
 import { connectionHeaders, formEncode } from "./apps.ts";
 import { toolDefault, neverByName, neverHttp } from "./toolpolicy.ts";
 import type { Services, Agent } from "./services.ts";
+import { personHandle } from "./profile.ts";
 
 export type Decision = "allow" | "ask" | "block" | "off";
 type Category = "core" | "read" | "write" | "danger";
@@ -410,8 +411,9 @@ export class Gateway {
   authorName(type: string, aid: string): string {
     if (type === "system") return "CircleChat";
     if (type === "agent") return this.svc.agent(aid)?.name ?? "agent";
-    const u = this.db.prepare("SELECT name FROM users WHERE id = ?").get(aid) as any;
-    return u?.name ?? "someone";
+    // people appear as @username, to agents too (server/src/profile.ts)
+    const h = personHandle(this.db, aid);
+    return h ? `@${h}` : "someone";
   }
 
   // ------------------------------------------------------------ calling a tool

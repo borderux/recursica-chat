@@ -12,7 +12,7 @@ import { ENGINES, agentDirs } from "./agents/engines.ts";
 import { sandboxProblem } from "./agents/sandboxes.ts";
 import { neverByName } from "./toolpolicy.ts";
 import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } from "./google.ts";
-import { registerProfile } from "./profile.ts";
+import { handleTaken, registerProfile } from "./profile.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -322,7 +322,7 @@ export function buildApi(app: App): Hono<Env> {
     requireRole(u, "builder");
     const b = await c.req.json();
     const f = validAgentFields(b, false);
-    if (svc.agent(f.handle)) throw bad(`@${f.handle} is taken`);
+    if (svc.agent(f.handle) || handleTaken(db, f.handle)) throw bad(`@${f.handle} is taken`);
     const aid = id("a_");
     const style = f.style ?? STYLES[Math.floor(Math.random() * STYLES.length)];
     const colour = f.colour ?? COLOURS[Math.floor(Math.random() * COLOURS.length)]; // new agents get a random colour
@@ -355,7 +355,7 @@ export function buildApi(app: App): Hono<Env> {
     const a = svc.agent(c.req.param("id"));
     if (!a) throw new HttpError(404, "no such agent");
     const f = validAgentFields(await c.req.json(), true);
-    if (f.handle && f.handle !== a.handle && svc.agent(f.handle)) throw bad(`@${f.handle} is taken`);
+    if (f.handle && f.handle !== a.handle && (svc.agent(f.handle) || handleTaken(db, f.handle))) throw bad(`@${f.handle} is taken`);
     const keys = Object.keys(f);
     if (keys.length) db.prepare(`UPDATE agents SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => f[k]), a.id);
     // engine, model or sandbox changes need a fresh process
@@ -439,7 +439,7 @@ export function buildApi(app: App): Hono<Env> {
         .replace(/[^a-z0-9_-]/g, "")
         .slice(0, 30) || "imported";
     if (MENTION_ALL.has(handle)) throw bad(`@${handle} is kept for mentioning every agent in a chat. Pick another handle.`);
-    if (svc.agent(handle)) throw bad(`@${handle} is taken`);
+    if (svc.agent(handle) || handleTaken(db, handle)) throw bad(`@${handle} is taken`);
     const problem = sandboxProblem(b.sandbox ?? "docker");
     if (problem) throw bad(problem);
     const aid = id("a_");

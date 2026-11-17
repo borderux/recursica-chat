@@ -56,7 +56,7 @@ function plainMd(s: string): string {
 }
 
 export function ChatList({ active }: { active?: string }) {
-  const { chats, agent, user, me, go } = useStore();
+  const { chats, agent, user, me, go, who: whoIs } = useStore();
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState<"" | "group" | "dm">("");
@@ -71,7 +71,7 @@ export function ChatList({ active }: { active?: string }) {
     const m = c.last;
     if (!m) return c.kind === "agents" ? "Agents only" : "No messages yet";
     let who = "";
-    if (m.authorType === "user") who = m.authorId === me.id ? "You" : (user(m.authorId)?.name ?? "");
+    if (m.authorType === "user") who = m.authorId === me.id ? "You" : whoIs(m.authorId);
     if (m.authorType === "agent" && c.kind !== "dm") who = agent(m.authorId)?.name ?? "";
     const text =
       m.kind === "plan" ? `Plan: ${m.body}` : m.kind === "memory" ? `Saved to memory: ${m.body}` : m.kind === "approval" ? m.body : (m.authorType === "agent" ? plainMd(m.body) : m.body).replace(/\s+/g, " ");
@@ -216,7 +216,7 @@ function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
 
 // ================================================================ conversation
 function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
-  const { agent, user, me, go, fail, reloadChats } = useStore();
+  const { agent, user, me, go, fail, reloadChats, who } = useStore();
   const [chat, setChat] = useState<Chat | null>(null);
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [more, setMore] = useState(false);
@@ -315,7 +315,7 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
   const dmAgent = chat.kind === "dm" ? agentsHere[0] : undefined;
   const title = chatTitle(chat, agent);
   const memberNames = [
-    ...[...people].sort((x) => (x.id === me.id ? -1 : 1)).map((m) => (m.id === me.id ? "You" : (user(m.id)?.name ?? "someone"))),
+    ...[...people].sort((x) => (x.id === me.id ? -1 : 1)).map((m) => (m.id === me.id ? "You" : who(m.id))),
     ...agentsHere.map((a) => a.name),
   ].join(", ");
 
@@ -467,12 +467,12 @@ function Thread({ msgs, chat, approvals }: { msgs: Message[]; chat: Chat; approv
 }
 
 function Bubble({ m, first, last, mine, dm, approvals }: { m: Message; first: boolean; last: boolean; mine: boolean; dm: boolean; approvals: Record<string, Approval> }) {
-  const { agent, user, go } = useStore();
+  const { agent, user, go, who } = useStore();
   const ap = m.kind === "approval" ? approvals[m.meta.approvalId] : undefined;
   const agentId = m.authorType === "agent" ? m.authorId : ap?.agentId;
   const a = agentId ? agent(agentId) : undefined;
   const u = m.authorType === "user" ? user(m.authorId) : undefined;
-  const name = a ? a.name : u ? u.name : "RecursicaChat";
+  const name = a ? a.name : u ? who(u.id) : "RecursicaChat";
   const showName = first && !mine && !(dm && a) && m.kind === "text";
   const av = a ? <AgentAv a={a} size={40} dot={false} onClick={() => go(`/agents/${a.id}`)} /> : u ? <UserAv u={u} size={40} /> : <span className="spacer" />;
   let content: ReactNode;
@@ -627,7 +627,7 @@ export async function decide(id: string, decision: "allow_once" | "allow_always"
 }
 
 function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
-  const { user, fail, go, toast, isAdmin } = useStore();
+  const { user, fail, go, toast, isAdmin, who } = useStore();
   const [busy, setBusy] = useState(false);
   const state = (m.meta.state as Approval["state"]) ?? ap?.state ?? "pending";
   const d = ap?.detail ?? {};
@@ -683,7 +683,7 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
         ) : (
           <span className={`status ${state === "approved" ? "done" : state === "denied" ? "blocked" : "sleeping"}`}>
             <Icon n={state === "approved" ? "check" : "x"} />
-            {decisionText(decided as any, (id) => user(id)?.name ?? "someone")}
+            {decisionText(decided as any, who)}
           </span>
         )}
       </div>
@@ -692,8 +692,10 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
 }
 
 // ---------------------------------------------------------------- composer
+// a person in the @ list: they're mentioned by username (server/src/profile.ts)
+type PersonPick = { person: string; handle: string };
 function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agents: Agent[]; placeholder: string; onOpenInfo: () => void }) {
-  const { fail } = useStore();
+  const { fail, me, user, profiles } = useStore();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [mention, setMention] = useState<{ q: string; start: number } | null>(null);
@@ -723,11 +725,16 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
   const matches = useMemo(() => {
     if (!mention) return [];
     const q = mention.q.toLowerCase();
-    const list: (Agent | "all")[] = agents.filter((a) => a.handle.startsWith(q) || a.name.toLowerCase().startsWith(q));
+    const list: (Agent | "all" | PersonPick)[] = agents.filter((a) => a.handle.startsWith(q) || a.name.toLowerCase().startsWith(q));
     // @all: every agent in a group answers
     if (chat.kind === "group" && agents.length > 1 && ["all", "everyone"].some((w) => w.startsWith(q))) list.unshift("all");
+    // the other people in this chat, by username or full name
+    for (const m of chat.members) {
+      const p = m.type === "user" && m.id !== me.id ? profiles[m.id] : undefined;
+      if (p && (p.handle.startsWith(q) || (user(m.id)?.name ?? "").toLowerCase().startsWith(q))) list.push({ person: m.id, handle: p.handle });
+    }
     return list;
-  }, [mention, agents, chat.kind]);
+  }, [mention, agents, chat.kind, chat.members, me.id, profiles, user]);
 
   const detect = (value: string, caret: number) => {
     const before = value.slice(0, caret);
@@ -737,7 +744,7 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
       setSel(0);
     } else setMention(null);
   };
-  const pick = (a: Agent | "all") => {
+  const pick = (a: Agent | "all" | PersonPick) => {
     if (!mention) return;
     const el = ta.current!;
     const caret = el.selectionStart;
@@ -799,15 +806,32 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
       {mention && (
         <div className="card mention-pop">
           <div className="small muted" style={{ fontWeight: 600, padding: "6px 10px" }}>
-            Agents in this chat
+            In this chat
           </div>
           {matches.length === 0 && (
             <div className="small muted" style={{ padding: "6px 10px" }}>
-              {agents.length ? "No agent by that name here." : "No agents in this chat yet."}
+              {agents.length ? "Nobody by that name here." : "No agents in this chat yet."}
             </div>
           )}
           {matches.map((a, i) =>
-            a === "all" ? (
+            typeof a === "object" && "person" in a ? (
+              <div
+                key={a.person}
+                className={"row-chat" + (i === sel ? " on" : "")}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(a);
+                }}
+              >
+                <UserAv u={user(a.person)} size={40} />
+                <div className="mid">
+                  <div className="t">
+                    <b>@{a.handle}</b>
+                  </div>
+                  <div className="p">a person · gets a notification</div>
+                </div>
+              </div>
+            ) : a === "all" ? (
               <div
                 key="all"
                 className={"row-chat" + (i === sel ? " on" : "")}
@@ -910,7 +934,7 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
 
 // ================================================================ group info drawer
 function GroupInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
-  const { agent, user, users, agents, me, go, fail, toast } = useStore();
+  const { agent, user, users, agents, me, go, fail, toast, who } = useStore();
   const [adding, setAdding] = useState<"" | "agent" | "user">("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [memCount, setMemCount] = useState(0);
@@ -1020,7 +1044,7 @@ function GroupInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
             <div key={m.id} className="it" style={{ padding: "10px 14px" }}>
               <UserAv u={user(m.id)} size={40} dot={m.id === me.id} />
               <div className="grow">
-                <b style={{ fontWeight: 600 }}>{user(m.id)?.name ?? "someone"}</b> {m.id === me.id && <span className="small muted">you</span>}
+                <b style={{ fontWeight: 600 }}>{who(m.id)}</b> {m.id === me.id && <span className="small muted">you</span>}
               </div>
               {chat.kind === "group" && m.id !== me.id && (
                 <button className="btn icon ghost sm" title="Remove from chat" aria-label="Remove" onClick={() => member("user", m.id, true)}>
@@ -1083,8 +1107,8 @@ function GroupInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
 
 // ================================================================ pickers + new chat
 export function MemberChip({ m, on, onClick }: { m: Member; on: boolean; onClick: () => void }) {
-  const { agent, user } = useStore();
-  const name = m.type === "agent" ? (agent(m.id)?.name ?? "agent") : (user(m.id)?.name ?? "someone");
+  const { agent, user, who } = useStore();
+  const name = m.type === "agent" ? (agent(m.id)?.name ?? "agent") : who(m.id);
   return (
     <span className={"chip" + (on ? " on" : "")} onClick={onClick} role="checkbox" aria-checked={on}>
       <MemberAv m={m} size={28} />

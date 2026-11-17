@@ -124,7 +124,7 @@ function Routes() {
 }
 
 function Shell({ rail, children }: { rail: string; children: ReactNode }) {
-  const { go, pending, chats, me } = useStore();
+  const { go, pending, chats, me, who } = useStore();
   const lowCredits = useLowCredits();
   const [noteHidden, setNoteHidden] = useState(false);
   const unread = chats.filter((c) => c.unread && c.members.some((m) => m.type === "user" && m.id === me.id)).length;
@@ -164,7 +164,7 @@ function Shell({ rail, children }: { rail: string; children: ReactNode }) {
         {item("people", "users", "People and agents", "/people")}
         <div className="bottom">
           {item("settings", "gear", "Settings", lowCredits ? "/settings/credits" : "/settings/server", lowCredits ? 1 : 0)}
-          <span className="me" title={`${me.name} (you)`} onClick={() => go("/settings/server")}>
+          <span className="me" title={`${who(me.id)} (you)`} onClick={() => go("/settings/server")}>
             <UserAv u={me} size={40} dot />
           </span>
         </div>

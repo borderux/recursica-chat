@@ -14,7 +14,7 @@ const SECTIONS: [string, Task["status"][]][] = [
 ];
 
 export function TasksScreen({ chatId }: { chatId?: string }) {
-  const { chats, agent, go, fail, user } = useStore();
+  const { chats, agent, go, fail, user, who } = useStore();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [assignee, setAssignee] = useState("");
@@ -98,7 +98,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                 <option value="">Anyone</option>
                 {c.members.map((m) => (
                   <option key={m.type + m.id} value={`${m.type}:${m.id}`}>
-                    {m.type === "agent" ? agent(m.id)?.name : user(m.id)?.name}
+                    {m.type === "agent" ? agent(m.id)?.name : who(m.id)}
                   </option>
                 ))}
               </select>

@@ -29,7 +29,7 @@ function hl(text: string, q: string): ReactNode {
 }
 
 export function SearchScreen({ q: initial }: { q: string }) {
-  const { go, agent, user, chat, me } = useStore();
+  const { go, agent, user, chat, me, who: whoIs } = useStore();
   const [q, setQ] = useState(initial);
   const [r, setR] = useState<Results | null>(null);
   const [tab, setTab] = useState<"all" | "agents" | "chats" | "messages" | "tasks">("all");
@@ -124,7 +124,7 @@ export function SearchScreen({ q: initial }: { q: string }) {
                 {r.messages.map((m) => {
                   const c = chat(m.chatId);
                   const a = m.authorType === "agent" ? agent(m.authorId) : undefined;
-                  const who = a ? a.name : m.authorType === "user" ? (m.authorId === me.id ? "You" : (user(m.authorId)?.name ?? "someone")) : "RecursicaChat";
+                  const who = a ? a.name : m.authorType === "user" ? (m.authorId === me.id ? "You" : whoIs(m.authorId)) : "RecursicaChat";
                   return (
                     <div key={m.id} className="it" style={{ alignItems: "flex-start", cursor: "pointer" }} onClick={() => go(`/chats/${m.chatId}`)}>
                       {a ? (

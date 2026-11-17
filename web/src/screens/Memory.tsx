@@ -139,7 +139,7 @@ export function MemoryScreen({ filter, scopeId }: { filter: string; scopeId: str
 const things = (n: number) => `${n} ${n === 1 ? "thing" : "things"}`;
 
 function MemoryCard({ m }: { m: Memory }) {
-  const { agent, user, me, fail, toast } = useStore();
+  const { agent, user, me, fail, toast, who: personWho } = useStore();
   const [edit, setEdit] = useState(false);
   const [text, setText] = useState(m.text);
   useEffect(() => setText(m.text), [m.text]);
@@ -156,7 +156,7 @@ function MemoryCard({ m }: { m: Memory }) {
   };
   const patch = (b: object) => api.patch(`/api/memories/${m.id}`, b).catch(fail);
   const who = m.byType === "agent" ? agent(m.byId) : undefined;
-  const whoName = who ? who.name : m.byId === me.id ? "You" : (user(m.byId)?.name ?? "Someone");
+  const whoName = who ? who.name : m.byId === me.id ? "You" : personWho(m.byId);
   const isNew = Date.now() - m.createdAt < 3600_000;
   return (
     <div className="group" style={{ padding: "14px 16px", opacity: forgotten ? 0.55 : 1 }}>
@@ -191,7 +191,7 @@ function MemoryCard({ m }: { m: Memory }) {
       <div className="row small muted" style={{ gap: 8, marginTop: 8 }}>
         {forgotten ? (
           <>
-            Forgotten by {m.forgottenBy === me.id ? "you" : (user(m.forgottenBy ?? "")?.name ?? "someone")} · {shortWhen(m.forgottenAt!)}
+            Forgotten by {m.forgottenBy === me.id ? "you" : personWho(m.forgottenBy ?? "")} · {shortWhen(m.forgottenAt!)}
             <span className="linkish" style={{ marginLeft: "auto" }} onClick={() => patch({ restore: true })}>
               Bring back
             </span>

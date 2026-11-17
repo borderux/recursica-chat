@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Sign in with Google, against a fake Google: the code flow with PKCE, state and nonce; every claim
 // check; matching only an existing owner or admin, or anyone in the domain, never creating anyone;
-// the client secret from a file; and CIRCLECHAT_PASSWORD_SIGNIN. Nothing in this file may reach
-// the internet.
+// the client secret from a file; CIRCLECHAT_PASSWORD_SIGNIN; and the copy of the Google photo (from
+// a fake photo host). Nothing in this file may reach the internet.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -10,6 +10,9 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GOOGLE, googleConfig, passwordSignIn, passwordRefusal, idTokenProblem, readClientSecret, inDomain } from "../server/src/google.ts";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { PHOTO, photoUrl } from "../server/src/profile.ts";
 import { startApp, setupOwner, fakeServer, Client, type Harness } from "./helpers.ts";
 import { noOutsideNetwork, type NetworkGuard } from "./no-network.ts";
 
@@ -178,7 +181,7 @@ test("the request to Google: code flow, PKCE S256, state, nonce, the domain, and
   assert.equal(p.get("client_id"), CLIENT_ID);
   assert.equal(p.get("redirect_uri"), `${PUBLIC}/auth/google/callback`);
   assert.equal(p.get("response_type"), "code");
-  assert.equal(p.get("scope"), "openid email");
+  assert.equal(p.get("scope"), "openid email profile");
   assert.equal(p.get("code_challenge_method"), "S256");
   assert.equal(p.get("hd"), DOMAIN);
   for (const k of ["state", "nonce", "code_challenge"]) assert.ok((p.get(k) ?? "").length >= 32, k);
@@ -307,4 +310,151 @@ test("with Google off, its routes don't exist", async () => {
   } finally {
     process.env.CIRCLECHAT_GOOGLE_CLIENT_ID = CLIENT_ID;
   }
+});
+
+// ---------------------------------------------------------------- the Google photo
+
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 1)]);
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(200, 2)]);
+const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBP"), Buffer.alloc(200, 3)]);
+
+/** A fake photo host: each path answers one way. Records the paths asked for. */
+async function photoHost() {
+  const asked: string[] = [];
+  const send = (res: any, type: string, body: Buffer | string, extra: Record<string, string> = {}) => res.writeHead(200, { "content-type": type, ...extra }).end(body);
+  const server = createServer((req, res) => {
+    const path = req.url ?? "";
+    asked.push(path);
+    if (path === "/a/jpeg=s256-c") return send(res, "image/jpeg", JPEG);
+    if (path === "/a/png=s256-c") return send(res, "image/png", PNG);
+    if (path === "/a/webp=s256-c") return send(res, "image/webp", WEBP);
+    if (path === "/a/jpeg-as-text=s256-c") return send(res, "text/html", JPEG); // the bytes decide, not the header
+    if (path === "/a/svg=s256-c") return send(res, "image/jpeg", '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>');
+    if (path === "/a/html=s256-c") return send(res, "image/png", "<html><script>1</script></html>");
+    if (path === "/a/gif=s256-c") return send(res, "image/gif", Buffer.from("GIF89a" + "x".repeat(100)));
+    if (path === "/a/big=s256-c") return send(res, "image/jpeg", Buffer.concat([JPEG, Buffer.alloc(PHOTO.maxBytes)]));
+    if (path === "/a/big-unsized=s256-c") {
+      // no content-length: the size is only known by reading
+      res.writeHead(200, { "content-type": "image/jpeg", "transfer-encoding": "chunked" });
+      res.write(JPEG);
+      for (let i = 0; i < 40; i++) res.write(Buffer.alloc(8 * 1024));
+      return res.end();
+    }
+    if (path === "/a/redirect=s256-c") return res.writeHead(302, { location: "/a/png=s256-c" }).end(); // a PNG, so following it would show
+    if (path === "/a/missing=s256-c") return res.writeHead(404).end();
+    if (path === "/a/slow=s256-c") return void setTimeout(() => send(res, "image/png", PNG), 2000);
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const host = `127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return { host, base: `http://${host}`, asked, close: () => new Promise<void>((r) => (server.closeAllConnections?.(), server.close(() => r()))) };
+}
+
+test("the Google photo: fetched at sign-in from the photo host only, checked, stored, and served by us", async () => {
+  const host = await photoHost();
+  const realPhoto = { ...PHOTO };
+  Object.assign(PHOTO, { protocol: "http:", host: host.host, timeoutMs: 500 });
+  try {
+    const adminId = (await owner.get("/api/users")).json.users.find((u: any) => u.email === "person-a@example.com").id;
+    const photo = (session?: string, extra: Record<string, string> = {}) => fetch(`${h.url}/api/people/${adminId}/photo`, { headers: { ...(session ? { cookie: session } : {}), ...extra } });
+    const version = async (session: string) => (await (await fetch(`${h.url}/api/profiles`, { headers: { cookie: session } })).json()).profiles[adminId];
+    const sign = async (picture?: string) => {
+      const r = await signIn(picture === undefined ? {} : { picture });
+      assert.equal(r.location, "/", `signed in (${picture})`);
+      assert.ok(r.session, "a photo never stops a sign-in");
+      return r.session!;
+    };
+
+    // a JPEG, asked for at 256 pixels, kept, and served with safe headers
+    let s = await sign(`${host.base}/a/jpeg=s96-c`);
+    assert.ok(host.asked.includes("/a/jpeg=s256-c"), "asked for 256 pixels");
+    let r = await photo(s);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("content-type"), "image/jpeg");
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(r.headers.get("content-security-policy"), "default-src 'none'; sandbox");
+    assert.match(r.headers.get("cache-control") ?? "", /^private/);
+    assert.deepEqual(Buffer.from(await r.arrayBuffer()), JPEG);
+    const etag = r.headers.get("etag")!;
+    assert.equal((await photo(s, { "if-none-match": etag })).status, 304);
+    const v1 = await version(s);
+    assert.ok(v1.photo, "the profile has a photo version");
+    assert.equal(v1.usePhoto, true);
+
+    // PNG and WebP too; the type comes from the bytes, never from the host's header
+    for (const [path, type] of [["png", "image/png"], ["webp", "image/webp"], ["jpeg-as-text", "image/jpeg"]]) {
+      s = await sign(`${host.base}/a/${path}=s96-c`);
+      assert.equal((await photo(s)).headers.get("content-type"), type, path);
+    }
+    s = await sign(`${host.base}/a/jpeg=s96-c`);
+    const kept = Buffer.from(await (await photo(s)).arrayBuffer());
+
+    // refused, and the previous copy stays: not an image, too large, a redirect, an error, too slow
+    for (const path of ["svg", "html", "gif", "big", "big-unsized", "redirect", "missing", "slow"]) {
+      const before = Date.now();
+      s = await sign(`${host.base}/a/${path}=s96-c`);
+      assert.ok(Date.now() - before < 1800, `${path}: the sign-in waited at most the time limit`);
+      assert.deepEqual(Buffer.from(await (await photo(s)).arrayBuffer()), kept, `${path}: the previous copy stays`);
+    }
+
+    // refused before any request: another host (even this same machine under another name), the
+    // real Google host (not this test's), another protocol, or a user name in the address
+    assert.equal(photoUrl(`${host.base}/a/jpeg=s96-c`)?.href, `${host.base}/a/jpeg=s256-c`);
+    for (const picture of [
+      `http://localhost:${host.host.split(":")[1]}/a/jpeg=s96-c`,
+      `https://${host.host}/a/jpeg=s96-c`,
+      `http://user:secret@${host.host}/a/jpeg=s96-c`,
+      `http://user@${host.host}/a/jpeg=s96-c`,
+    ])
+      assert.equal(photoUrl(picture), null, picture);
+    const n = host.asked.length;
+    for (const picture of [
+      `http://localhost:${host.host.split(":")[1]}/a/jpeg=s96-c`,
+      "https://evil.example/a/jpeg=s96-c",
+      "https://lh3.googleusercontent.com.evil.example/a/jpeg=s96-c",
+      `https://${host.host}/a/jpeg=s96-c`,
+      `http://user:secret@${host.host}/a/jpeg=s96-c`,
+      "javascript:alert(1)",
+      "not a url",
+    ]) {
+      s = await sign(picture);
+      assert.deepEqual(Buffer.from(await (await photo(s)).arrayBuffer()), kept, picture);
+    }
+    assert.equal(host.asked.length, n, "nothing was fetched for those");
+    assert.deepEqual(guard.attempts, [], "nothing tried to leave the machine");
+
+    // turned off: hidden, even after the next sign-in; then back on
+    assert.equal((await new Client(h.url).put("/api/me/photo", { use: false })).status, 401);
+    const put = (use: unknown) => fetch(`${h.url}/api/me/photo`, { method: "PUT", headers: { cookie: s, "content-type": "application/json", origin: h.url }, body: JSON.stringify({ use }) });
+    assert.equal((await put("no")).status, 400);
+    assert.equal((await put(false)).status, 200);
+    assert.equal((await photo(s)).status, 404);
+    assert.equal((await version(s)).photo, null);
+    assert.equal((await version(s)).hasPhoto, true, "you still see that a copy exists");
+    s = await sign(`${host.base}/a/png=s96-c`);
+    assert.equal((await photo(s)).status, 404, "still off after a sign-in");
+    assert.equal((await put(true)).status, 200);
+    assert.equal((await photo(s)).headers.get("content-type"), "image/png");
+
+    // no picture at sign-in: the copy is removed
+    s = await sign();
+    assert.equal((await photo(s)).status, 404);
+    assert.equal((await version(s)).photo, null);
+    assert.equal((await version(s)).hasPhoto, false);
+
+    // without a session, no photo
+    s = await sign(`${host.base}/a/jpeg=s96-c`);
+    assert.equal((await photo()).status, 401);
+  } finally {
+    Object.assign(PHOTO, realPhoto);
+    await host.close();
+  }
+});
+
+test("a photo goes with its account", () => {
+  const db = h.app.db;
+  db.prepare("INSERT INTO users(id, email, name, pass_hash, role, created_at) VALUES('u_photo', 'person-p@example.com', 'P', 'x', 'member', 0)").run();
+  db.prepare("INSERT INTO user_photos(user_id, type, bytes, sha256) VALUES('u_photo', 'image/jpeg', ?, 'x')").run(JPEG);
+  db.prepare("DELETE FROM users WHERE id = 'u_photo'").run();
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM user_photos WHERE user_id = 'u_photo'").get() as any).n, 0);
 });
