@@ -6,7 +6,7 @@ import { Blob, Icon } from "../ui/ui.tsx";
 
 // Why a sign-in with Google came back refused (/?signin=google-<reason>), in plain words.
 const GOOGLE_REFUSED: Record<string, string> = {
-  "no-account": "That Google account isn't an owner or admin of this workspace.",
+  "no-account": "That Google account can't sign in to this workspace. Ask an admin to add you.",
   domain: "That Google account isn't in this workspace's domain.",
   "email-not-verified": "That Google account's email address isn't verified.",
   cancelled: "Sign-in with Google was cancelled.",

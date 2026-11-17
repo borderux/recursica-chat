@@ -4,9 +4,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.ts";
 import { useStore } from "../store.tsx";
-import { AgentAv, COLOURS, EngIcon, Empty, Icon, Modal, UserAv, dollars } from "../ui/ui.tsx";
+import { AgentAv, COLOURS, EngIcon, Empty, Icon, Modal, dollars } from "../ui/ui.tsx";
 import { chatTitle } from "./Chats.tsx";
 import { Apps, McpServers, ToolLog, Triggers } from "./Integrations.tsx";
+import { YourProfile } from "./Profile.tsx";
 
 export function SettingsScreen({ section, id }: { section: string; id?: string }) {
   const { go, hosted, isAdmin } = useStore();
@@ -130,21 +131,7 @@ function Server() {
           {perm === "granted" && <span className="status done">On</span>}
         </div>
       </div>
-      <div className="sect">You</div>
-      <div className="group">
-        <div className="it">
-          <UserAv u={me} />
-          <div className="grow">
-            <b style={{ fontWeight: 600 }}>{me.name}</b>
-            <div className="small muted">
-              {me.email} · {me.role.charAt(0).toUpperCase() + me.role.slice(1)}
-            </div>
-          </div>
-          <button className="btn sm" onClick={logout}>
-            Sign out
-          </button>
-        </div>
-      </div>
+      <YourProfile onSignOut={logout} />
       {me.role === "owner" && !hosted && <YourData workspace={workspace} />}
     </div>
   );

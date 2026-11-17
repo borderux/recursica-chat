@@ -55,6 +55,23 @@ const PERSON_TONES = [
   { bg: "#F2E2E2", fg: "#6B3E3E" },
 ];
 const toneFor = (id: string) => PERSON_TONES[[...id].reduce((s, c) => s + c.charCodeAt(0), 0) % PERSON_TONES.length];
+/** The colors a person may choose for their avatar (server/src/profile.ts keeps the same names). */
+export const NAMED_TONES: Record<string, { bg: string; fg: string }> = {
+  sand: PERSON_TONES[0],
+  sky: PERSON_TONES[1],
+  lilac: PERSON_TONES[2],
+  sage: PERSON_TONES[3],
+  rose: PERSON_TONES[4],
+  peach: { bg: "#F6E3D6", fg: "#6E4630" },
+  mint: { bg: "#DDF0EA", fg: "#2F5A4D" },
+  slate: { bg: "#E2E5EA", fg: "#3D4450" },
+};
+/** Up to two letters: the first of the first word and of the last. */
+export const initialsOf = (name: string) => {
+  const w = name.trim().split(/\s+/).filter(Boolean);
+  if (!w.length) return "?";
+  return ((Array.from(w[0])[0] ?? "") + (w.length > 1 ? (Array.from(w[w.length - 1])[0] ?? "") : "")).toUpperCase();
+};
 
 // ---------------------------------------------------------------- status
 export type Vis = "working" | "blocked" | "waiting" | "idle" | "sleeping";
@@ -134,19 +151,20 @@ export function AgentAv({ a, size = 40, dot = true, onClick }: { a?: Agent; size
   if (!a) return <PersonAv name="?" id="x" size={size} />;
   return <Blob style={a.style} colour={a.colour} size={size} state={vis(a.status)} dot={dot} title={`${a.name}${a.roleTitle ? ", " + a.roleTitle : ""}`} onClick={onClick} />;
 }
-export function PersonAv({ name, id, size = 40, dot = false }: { name: string; id: string; size?: number; dot?: boolean }) {
-  const t = toneFor(id);
+export function PersonAv({ name, id, size = 40, dot = false, tone }: { name: string; id: string; size?: number; dot?: boolean; tone?: string }) {
+  const t = (tone && NAMED_TONES[tone]) || toneFor(id);
   return (
     <span className="av is-person" style={size ? ({ "--s": `${size}px` } as CSSProperties) : undefined} title={name}>
       <span className="av-person" style={{ background: t.bg, color: t.fg }}>
-        {(name.trim()[0] ?? "?").toUpperCase()}
+        {initialsOf(name)}
       </span>
       {dot && <i className="av-dot" />}
     </span>
   );
 }
 export function UserAv({ u, size = 40, dot = false }: { u?: User; size?: number; dot?: boolean }) {
-  return <PersonAv name={u?.name ?? "?"} id={u?.id ?? "?"} size={size} dot={dot} />;
+  const { looks } = useStore();
+  return <PersonAv name={u?.name ?? "?"} id={u?.id ?? "?"} size={size} dot={dot} tone={u ? looks[u.id] : undefined} />;
 }
 /** Any chat member: agents as blobs, people as initials. */
 export function MemberAv({ m, size = 40, dot = false, onClick }: { m: Member; size?: number; dot?: boolean; onClick?: () => void }) {
