@@ -99,6 +99,10 @@ interface Store {
   reloadChats: () => Promise<void>;
   reloadPending: () => Promise<void>;
   setWorkspace: (w: string) => void;
+  setMe: (u: User) => void;
+  /** avatar colors people chose, by user id (GET /api/looks) */
+  looks: Record<string, string>;
+  reloadLooks: () => Promise<void>;
   upsertAgent: (a: Agent) => void;
   isAdmin: boolean;
   /** hosted by CircleChat Cloud: Settings shows Hosting */
@@ -114,10 +118,13 @@ export const useStore = (): Store => {
 };
 
 export function StoreProvider(props: { me: User; workspace: string; version: string; hosted?: boolean; children: ReactNode; path: string; go: (to: string, replace?: boolean) => void }) {
-  const { me, path, go } = props;
+  const { path, go } = props;
+  // the signed-in person; their profile can change it (name)
+  const [me, setMe] = useState(props.me);
   const [workspace, setWorkspace] = useState(props.workspace);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [looks, setLooks] = useState<Record<string, string>>({});
   const [chats, setChats] = useState<Chat[]>([]);
   const [pending, setPending] = useState<Approval[]>([]);
   const [toastMsg, setToast] = useState<{ msg: string; bad: boolean } | null>(null);
@@ -132,11 +139,12 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
 
   const reloadAgents = useCallback(async () => setAgents((await api.get("/api/agents")).agents), []);
   const reloadUsers = useCallback(async () => setUsers((await api.get("/api/users")).users), []);
+  const reloadLooks = useCallback(async () => setLooks((await api.get("/api/looks")).looks), []);
   const reloadChats = useCallback(async () => setChats((await api.get("/api/chats")).chats), []);
   const reloadPending = useCallback(async () => setPending((await api.get("/api/approvals?state=pending")).approvals), []);
   const reloadAll = useCallback(() => {
-    Promise.all([reloadAgents(), reloadUsers(), reloadChats(), reloadPending()]).catch(fail);
-  }, [reloadAgents, reloadUsers, reloadChats, reloadPending, fail]);
+    Promise.all([reloadAgents(), reloadUsers(), reloadChats(), reloadPending(), reloadLooks()]).catch(fail);
+  }, [reloadAgents, reloadUsers, reloadChats, reloadPending, reloadLooks, fail]);
 
   useEffect(reloadAll, [reloadAll]);
   const online = useSocket(true, reloadAll);
@@ -208,13 +216,16 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
       reloadChats,
       reloadPending,
       setWorkspace,
+      setMe,
+      looks,
+      reloadLooks,
       upsertAgent: (a) => setAgents((list) => (list.some((x) => x.id === a.id) ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a])),
       isAdmin: me.role === "owner" || me.role === "admin",
       hosted: !!props.hosted,
       isBuilder: me.role !== "member",
       openChatId,
     }),
-    [me, workspace, props.version, props.hosted, agents, users, chats, pending, online, path, go, toast, fail, reloadAgents, reloadUsers, reloadChats, reloadPending, openChatId],
+    [me, workspace, props.version, props.hosted, agents, users, looks, reloadLooks, chats, pending, online, path, go, toast, fail, reloadAgents, reloadUsers, reloadChats, reloadPending, openChatId],
   );
   return (
     <Ctx.Provider value={value}>

@@ -12,6 +12,7 @@ import { ENGINES, agentDirs } from "./agents/engines.ts";
 import { sandboxProblem } from "./agents/sandboxes.ts";
 import { neverByName } from "./toolpolicy.ts";
 import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } from "./google.ts";
+import { registerProfile } from "./profile.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -204,10 +205,12 @@ export function buildApi(app: App): Hono<Env> {
   });
 
   api.get("/api/me", (c) => c.json({ user: c.get("user") }));
+  registerProfile(api, db);
   api.patch("/api/me", async (c) => {
     const u = c.get("user");
     const b = await c.req.json();
-    if (b.name) db.prepare("UPDATE users SET name = ? WHERE id = ?").run(String(b.name).slice(0, 60), u.id);
+    const name = String(b.name ?? "").trim().slice(0, 60); // a name of only spaces changes nothing
+    if (name) db.prepare("UPDATE users SET name = ? WHERE id = ?").run(name, u.id);
     if (b.password !== undefined) {
       const row = db.prepare("SELECT pass_hash FROM users WHERE id = ?").get(u.id) as any;
       if (!verifyPassword(String(b.currentPassword ?? ""), row.pass_hash)) throw new HttpError(403, "Your current password is wrong");

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sign in with Google, for owners and admins, against a fake Google: the code flow with PKCE, state
-// and nonce; every claim check; matching only an existing owner or admin, never creating anyone;
+// Sign in with Google, against a fake Google: the code flow with PKCE, state and nonce; every claim
+// check; matching only an existing owner or admin, or anyone in the domain, never creating anyone;
 // the client secret from a file; and CIRCLECHAT_PASSWORD_SIGNIN. Nothing in this file may reach
 // the internet.
 import { test, before, after } from "node:test";
@@ -9,7 +9,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GOOGLE, googleConfig, passwordSignIn, passwordRefusal, idTokenProblem, readClientSecret } from "../server/src/google.ts";
+import { GOOGLE, googleConfig, passwordSignIn, passwordRefusal, idTokenProblem, readClientSecret, inDomain } from "../server/src/google.ts";
 import { startApp, setupOwner, fakeServer, Client, type Harness } from "./helpers.ts";
 import { noOutsideNetwork, type NetworkGuard } from "./no-network.ts";
 
@@ -112,7 +112,11 @@ before(async () => {
   h = await startApp();
   owner = await setupOwner(h);
   ownerEmail = (await owner.get("/api/me")).json.user.email;
-  for (const [email, role] of [["person-a@example.com", "admin"], ["person-c@example.com", "member"]]) {
+  for (const [email, role] of [
+    ["person-a@example.com", "admin"],
+    ["person-c@example.com", "member"],
+    ["person-e@other.example", "member"],
+  ]) {
     assert.equal((await owner.post("/api/users", { email, name: email.split("@")[0], password: "example-password-4", role })).status, 200);
   }
   google = await fakeServer((r) => {
@@ -202,14 +206,38 @@ test("the owner signs in by the same email", async () => {
   assert.equal((await me(r.session)).user.role, "owner", "the email matches whatever its case");
 });
 
-test("a member, or an email with no account, is refused, and nobody is created", async () => {
+test("the domain: an exact match only, never a subdomain or a lookalike", () => {
+  assert.equal(inDomain("person-a@example.com", DOMAIN), true);
+  assert.equal(inDomain("PERSON-A@EXAMPLE.COM", DOMAIN), true);
+  for (const email of ["person-a@sub.example.com", "person-a@notexample.com", "person-a@example.com.other.example", "person-a@other.example"])
+    assert.equal(inDomain(email, DOMAIN), false, email);
+  assert.equal(inDomain("person-a@example.com", null), false, "no domain set: nobody");
+});
+
+test("a member in the domain signs in with their own role; outside it, or with no account, refused; nobody is created", async () => {
   const n = await userCount();
-  for (const [email, why] of [["person-c@example.com", "no-account"], ["person-d@example.com", "no-account"]]) {
+  const member = await signIn({ email: "person-c@example.com" });
+  assert.equal(member.location, "/");
+  const u = (await me(member.session)).user;
+  assert.equal(u.email, "person-c@example.com");
+  assert.equal(u.role, "member", "signed in as the member they are, nothing more");
+  // person-e is a member whose email is outside the domain, such as an alias of a domain account
+  for (const email of ["person-e@other.example", "person-d@example.com"]) {
     const r = await signIn({ email });
-    assert.equal(r.location, `/?signin=google-${why}`, email);
+    assert.equal(r.location, "/?signin=google-no-account", email);
     assert.equal(r.session, undefined, `${email}: no session`);
   }
   assert.equal(await userCount(), n, "no account was created");
+});
+
+test("with no domain set, Google matches only owners and admins", async () => {
+  delete process.env.CIRCLECHAT_GOOGLE_DOMAIN;
+  try {
+    assert.equal((await signIn({ email: "person-c@example.com", hd: undefined })).location, "/?signin=google-no-account");
+    assert.equal((await me((await signIn({ hd: undefined })).session)).user.role, "admin");
+  } finally {
+    process.env.CIRCLECHAT_GOOGLE_DOMAIN = DOMAIN;
+  }
 });
 
 test("each claim check refuses through the real callback", async () => {
@@ -264,6 +292,7 @@ test("passwords: members keeps them for members only; off for everyone; a wrong 
     process.env.CIRCLECHAT_PASSWORD_SIGNIN = "off";
     assert.equal((await pw("person-c@example.com")).status, 403, "off: nobody signs in with a password");
     assert.ok((await me((await signIn()).session)).user, "Google still works");
+    assert.equal((await me((await signIn({ email: "person-c@example.com" })).session)).user.role, "member", "for a member in the domain too");
   } finally {
     delete process.env.CIRCLECHAT_PASSWORD_SIGNIN;
   }

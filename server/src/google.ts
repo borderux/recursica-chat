@@ -18,8 +18,8 @@
 // checked (OpenID Connect Core 3.1.3.7), but every claim that matters is: iss, aud (and azp),
 // exp, iat, nonce, email_verified, and hd when a domain is set.
 //
-// Sign-in only finds an existing owner or admin by email. It never creates an account and never
-// signs in a member.
+// Sign-in only finds an existing account by email: an owner or admin, or anyone whose email is in
+// CIRCLECHAT_GOOGLE_DOMAIN, whatever their role. It never creates an account.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
@@ -82,6 +82,11 @@ export function passwordRefusal(role: string, mode: PasswordSignIn = passwordSig
   if (mode === "off") return "Password sign-in is off. Sign in with Google.";
   if (mode === "members" && (role === "owner" || role === "admin")) return "Owners and admins sign in with Google.";
   return null;
+}
+
+/** Whether an email address is in the domain: exactly, so not a subdomain, nor a lookalike. */
+export function inDomain(email: string, domain: string | null): boolean {
+  return !!domain && email.toLowerCase().endsWith("@" + domain);
 }
 
 const b64url = (b: Buffer) => b.toString("base64url");
@@ -214,7 +219,7 @@ export function registerGoogleSignIn(api: Hono<any>, deps: GoogleDeps): void {
 
     const email = String(claims.email).toLowerCase();
     const u = deps.db.prepare("SELECT id, role FROM users WHERE email = ?").get(email) as any;
-    if (!u || (u.role !== "owner" && u.role !== "admin")) return fail(c, "no-account");
+    if (!u || !(u.role === "owner" || u.role === "admin" || inDomain(email, cfg.domain))) return fail(c, "no-account");
     deleteCookie(c, FLOW_COOKIE, { path: "/auth/google" });
     deps.login(c, u.id);
     return c.redirect("/", 302);

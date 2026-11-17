@@ -35,7 +35,7 @@ const origins = allowedOrigins();
 const google = googleConfig();
 if (google) readClientSecret(google.secretFile);
 const passwords = passwordSignIn();
-console.log(google ? `Sign-in with Google: on for owners and admins${google.domain ? ` of ${google.domain}` : ""}. Passwords: ${passwords}.` : "Sign-in with Google: off.");
+console.log(google ? `Sign-in with Google: on for ${google.domain ? `everyone at ${google.domain}` : "owners and admins"}. Passwords: ${passwords}.` : "Sign-in with Google: off.");
 console.log(
   origins
     ? `Pages allowed to change anything: ${origins.join(", ")}`
