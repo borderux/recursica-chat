@@ -143,6 +143,8 @@ The operator commands in `server/src/cli.ts` write to stdout. They use `CIRCLECH
 | `node server/src/cli.ts export` | The full data export as a `.tar.gz`: `workspace.json` (every table as JSON, password hashes and secret values left out), `circlechat.db`, `agents/` and a `README.txt`. The owner can download the same file in Settings, Server, Your data. |
 | `node server/src/cli.ts state` | `{"users":n,"agents":n,"workspace":"..."}` |
 | `node server/src/cli.ts set-password-hash <email>` | Reads an scrypt hash on stdin, sets it as that person's password and signs them out everywhere. Prints `ok`. |
+| `sudo node server/src/cli.ts session <email> [--minutes N]` | **Root only.** A new session for a member or builder, never an owner or admin, lasting `N` minutes (1 to 60, default 60). Prints only the session's token, which works as `Authorization: Bearer <token>`. For a check that drives the API while password sign-in is off. The command runs as the data folder's owner. |
+| `sudo node server/src/cli.ts end-sessions <email>` | **Root only.** Ends every session of that member or builder. |
 
 A nightly backup with cron:
 

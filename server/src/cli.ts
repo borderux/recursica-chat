@@ -4,6 +4,8 @@
 //   node server/src/cli.ts backup   database snapshot + agent folders (tar.gz), no vault key
 //   node server/src/cli.ts state    {"users":n,"agents":n,"workspace":"..."} as JSON
 //   node server/src/cli.ts set-password-hash <email>   new scrypt hash on stdin; signs that person out everywhere
+//   node server/src/cli.ts session <email> [--minutes N]   root only: a session of at most an hour for a member (clisession.ts)
+//   node server/src/cli.ts end-sessions <email>           root only: signs that member out everywhere
 // Uses CIRCLECHAT_DATA like the server. Safe to run while the server is up (SQLite WAL).
 import { existsSync, readFileSync, mkdtempSync, mkdirSync, rmSync, cpSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,8 +16,16 @@ import { App } from "./app.ts";
 import { REPO_ROOT } from "./agents/engines.ts";
 import { exportWorkspace } from "./hosting.ts";
 import { getSetting } from "./db.ts";
+import { asDataOwner, sessionArgs, memberSession, endSessions } from "./clisession.ts";
 
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
+if (process.argv[2] === "session" || process.argv[2] === "end-sessions") {
+  const refused = asDataOwner(dataDir);
+  if (refused) {
+    console.error(refused);
+    process.exit(2);
+  }
+}
 const keyFile = join(dataDir, "master.key");
 const masterKey = process.env.CIRCLECHAT_MASTER_KEY ?? (existsSync(keyFile) ? readFileSync(keyFile, "utf8").trim() : "");
 if (!masterKey) {
@@ -68,8 +78,24 @@ if (cmd === "export") {
   app.db.prepare("UPDATE users SET pass_hash = ? WHERE id = ?").run(hash, u.id);
   app.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(u.id);
   process.stdout.write("ok\n");
+} else if (cmd === "session" || cmd === "end-sessions") {
+  try {
+    if (cmd === "session") {
+      const { email, minutes } = sessionArgs(process.argv.slice(3));
+      const s = memberSession(app.db, email, minutes);
+      console.error(`A session for ${email} until ${new Date(s.expiresAt).toISOString()}.`);
+      process.stdout.write(s.token + "\n");
+    } else {
+      const email = String(process.argv[3] ?? "");
+      if (!email || process.argv.length > 4) throw new Error("usage: cli.ts end-sessions <email>");
+      console.error(`Ended ${endSessions(app.db, email)} session(s) of ${email.toLowerCase()}.`);
+    }
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(3);
+  }
 } else {
-  console.error("usage: cli.ts export | backup | state | set-password-hash <email>");
+  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email>");
   process.exit(2);
 }
 app.db.close();
