@@ -3,6 +3,16 @@
 // websocket, a tiny router and toasts.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type Agent, type Approval, type BusEvent, type Chat, type User } from "./api.ts";
+import { mentionsMe } from "./mentions.ts";
+
+/** A person's username, color and photo version (GET /api/profiles; server/src/profile.ts). */
+export interface Profile {
+  handle: string;
+  tone: string | null;
+  photo: string | null;
+  usePhoto?: boolean;
+  hasPhoto?: boolean;
+}
 
 // ---------------------------------------------------------------- router
 export function usePath(): [string, (to: string, replace?: boolean) => void] {
@@ -100,9 +110,11 @@ interface Store {
   reloadPending: () => Promise<void>;
   setWorkspace: (w: string) => void;
   setMe: (u: User) => void;
-  /** avatar colors people chose, by user id (GET /api/looks) */
-  looks: Record<string, string>;
-  reloadLooks: () => Promise<void>;
+  /** usernames, avatar colors and photos, by user id (GET /api/profiles) */
+  profiles: Record<string, Profile>;
+  reloadProfiles: () => Promise<void>;
+  /** how a person appears everywhere: @username (the full name shows only in settings) */
+  who: (userId: string) => string;
   upsertAgent: (a: Agent) => void;
   isAdmin: boolean;
   /** hosted by CircleChat Cloud: Settings shows Hosting */
@@ -124,7 +136,7 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
   const [workspace, setWorkspace] = useState(props.workspace);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [looks, setLooks] = useState<Record<string, string>>({});
+  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const [chats, setChats] = useState<Chat[]>([]);
   const [pending, setPending] = useState<Approval[]>([]);
   const [toastMsg, setToast] = useState<{ msg: string; bad: boolean } | null>(null);
@@ -139,12 +151,12 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
 
   const reloadAgents = useCallback(async () => setAgents((await api.get("/api/agents")).agents), []);
   const reloadUsers = useCallback(async () => setUsers((await api.get("/api/users")).users), []);
-  const reloadLooks = useCallback(async () => setLooks((await api.get("/api/looks")).looks), []);
+  const reloadProfiles = useCallback(async () => setProfiles((await api.get("/api/profiles")).profiles), []);
   const reloadChats = useCallback(async () => setChats((await api.get("/api/chats")).chats), []);
   const reloadPending = useCallback(async () => setPending((await api.get("/api/approvals?state=pending")).approvals), []);
   const reloadAll = useCallback(() => {
-    Promise.all([reloadAgents(), reloadUsers(), reloadChats(), reloadPending(), reloadLooks()]).catch(fail);
-  }, [reloadAgents, reloadUsers, reloadChats, reloadPending, reloadLooks, fail]);
+    Promise.all([reloadAgents(), reloadUsers(), reloadChats(), reloadPending(), reloadProfiles()]).catch(fail);
+  }, [reloadAgents, reloadUsers, reloadChats, reloadPending, reloadProfiles, fail]);
 
   useEffect(reloadAll, [reloadAll]);
   const online = useSocket(true, reloadAll);
@@ -157,6 +169,8 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
   agentsRef.current = agents;
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
 
   // keep lists live
   const chatReload = useRef<number | undefined>(undefined);
@@ -181,6 +195,17 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
       const c = chatsRef.current.find((x) => x.id === e.chatId);
       const isMine = c?.members.some((m) => m.type === "user" && m.id === me.id);
       if (a && isMine) notify(c && c.kind !== "dm" ? `${a.name} in ${c.name}` : a.name, e.message.body.slice(0, 140), () => go(`/chats/${e.chatId}`));
+    }
+    // someone @mentions you: a notification, unless you're looking at that chat (an agent's message
+    // in your chat has already notified above)
+    if (e.type === "message" && e.chatId !== openRef.current && mentionsMe(e.message, { id: me.id, handle: profilesRef.current[me.id]?.handle })) {
+      const c = chatsRef.current.find((x) => x.id === e.chatId);
+      const isMine = c?.members.some((m) => m.type === "user" && m.id === me.id);
+      const byAgent = e.message.authorType === "agent";
+      if (!(byAgent && isMine)) {
+        const by = byAgent ? (agentsRef.current.find((x) => x.id === e.message.authorId)?.name ?? "An agent") : profilesRef.current[e.message.authorId] ? `@${profilesRef.current[e.message.authorId].handle}` : "Someone";
+        notify(`${by} mentioned you${c && c.kind !== "dm" ? ` in ${c.name}` : ""}`, e.message.body.slice(0, 140), () => go(`/chats/${e.chatId}`));
+      }
     }
   });
 
@@ -217,15 +242,16 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
       reloadPending,
       setWorkspace,
       setMe,
-      looks,
-      reloadLooks,
+      profiles,
+      reloadProfiles,
+      who: (id) => (profiles[id] ? `@${profiles[id].handle}` : (users.find((u) => u.id === id)?.name ?? "someone")),
       upsertAgent: (a) => setAgents((list) => (list.some((x) => x.id === a.id) ? list.map((x) => (x.id === a.id ? a : x)) : [...list, a])),
       isAdmin: me.role === "owner" || me.role === "admin",
       hosted: !!props.hosted,
       isBuilder: me.role !== "member",
       openChatId,
     }),
-    [me, workspace, props.version, props.hosted, agents, users, looks, reloadLooks, chats, pending, online, path, go, toast, fail, reloadAgents, reloadUsers, reloadChats, reloadPending, openChatId],
+    [me, workspace, props.version, props.hosted, agents, users, profiles, reloadProfiles, chats, pending, online, path, go, toast, fail, reloadAgents, reloadUsers, reloadChats, reloadPending, openChatId],
   );
   return (
     <Ctx.Provider value={value}>

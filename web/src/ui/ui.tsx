@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Small shared building blocks: icons, avatars, status, toggles, modals, formatting.
-import { useEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { Agent, AgentStatus, Member, User } from "../api.ts";
 import { useStore } from "../store.tsx";
 
@@ -151,20 +151,37 @@ export function AgentAv({ a, size = 40, dot = true, onClick }: { a?: Agent; size
   if (!a) return <PersonAv name="?" id="x" size={size} />;
   return <Blob style={a.style} colour={a.colour} size={size} state={vis(a.status)} dot={dot} title={`${a.name}${a.roleTitle ? ", " + a.roleTitle : ""}`} onClick={onClick} />;
 }
-export function PersonAv({ name, id, size = 40, dot = false, tone }: { name: string; id: string; size?: number; dot?: boolean; tone?: string }) {
+export function PersonAv({ name, id, size = 40, dot = false, tone, photo, title }: { name: string; id: string; size?: number; dot?: boolean; tone?: string; photo?: string; title?: string }) {
   const t = (tone && NAMED_TONES[tone]) || toneFor(id);
+  // the photo's copy on this server; initials on the color whenever there's none, or it won't load
+  const [broken, setBroken] = useState("");
   return (
-    <span className="av is-person" style={size ? ({ "--s": `${size}px` } as CSSProperties) : undefined} title={name}>
-      <span className="av-person" style={{ background: t.bg, color: t.fg }}>
-        {initialsOf(name)}
-      </span>
+    <span className="av is-person" style={size ? ({ "--s": `${size}px` } as CSSProperties) : undefined} title={title ?? name}>
+      {photo && broken !== photo ? (
+        <img src={photo} alt="" draggable={false} style={{ borderRadius: "50%" }} onError={() => setBroken(photo)} />
+      ) : (
+        <span className="av-person" style={{ background: t.bg, color: t.fg }}>
+          {initialsOf(name)}
+        </span>
+      )}
       {dot && <i className="av-dot" />}
     </span>
   );
 }
 export function UserAv({ u, size = 40, dot = false }: { u?: User; size?: number; dot?: boolean }) {
-  const { looks } = useStore();
-  return <PersonAv name={u?.name ?? "?"} id={u?.id ?? "?"} size={size} dot={dot} tone={u ? looks[u.id] : undefined} />;
+  const { profiles, who } = useStore();
+  const p = u ? profiles[u.id] : undefined;
+  return (
+    <PersonAv
+      name={u?.name ?? "?"}
+      id={u?.id ?? "?"}
+      size={size}
+      dot={dot}
+      tone={p?.tone ?? undefined}
+      photo={u && p?.photo ? `/api/people/${u.id}/photo?v=${p.photo}` : undefined}
+      title={u ? who(u.id) : undefined}
+    />
+  );
 }
 /** Any chat member: agents as blobs, people as initials. */
 export function MemberAv({ m, size = 40, dot = false, onClick }: { m: Member; size?: number; dot?: boolean; onClick?: () => void }) {

@@ -567,7 +567,7 @@ function TermLine({ l }: { l: Line }) {
 }
 
 export function WatchScreen({ id }: { id: string }) {
-  const { agent, chat, go, fail, toast, upsertAgent, user, isBuilder } = useStore();
+  const { agent, chat, go, fail, toast, upsertAgent, user, isBuilder, who } = useStore();
   const a = agent(id);
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [status, setStatus] = useState<AgentStatus | null>(null);
@@ -631,7 +631,7 @@ export function WatchScreen({ id }: { id: string }) {
   const paused = s.state === "stopped" || s.state === "sleeping" || s.state === "crashed";
   const c = s.chatId ? chat(s.chatId) : undefined;
   const lastUsage = [...entries].reverse().find((e) => e.kind === "usage");
-  const from = (d: Delivery) => (d.fromType === "user" ? (user(d.fromId)?.name ?? "someone") : d.fromType === "agent" ? (agent(d.fromId)?.name ?? "agent") : d.fromType === "trigger" ? d.fromId : "RecursicaChat");
+  const from = (d: Delivery) => (d.fromType === "user" ? who(d.fromId) : d.fromType === "agent" ? (agent(d.fromId)?.name ?? "agent") : d.fromType === "trigger" ? d.fromId : "RecursicaChat");
 
   return (
     <div className="main solo">
