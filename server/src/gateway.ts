@@ -34,6 +34,10 @@ export interface ToolDef {
   run(args: any, ctx: CallContext): Promise<string>;
 }
 
+// the files a message holds, with their ids, so an agent can bundle its own files later (files.ts)
+const filesNote = (meta: any) =>
+  Array.isArray(meta?.files) && meta.files.length ? ` [files: ${meta.files.map((f: any) => `${f.name} (${f.id})`).join(", ")}]` : "";
+
 export interface CallContext {
   agent: Agent;
   chatId: string;
@@ -223,9 +227,16 @@ export class Gateway {
     return tools.filter((t) => this.decide(t, ctx.chatId) !== "off");
   }
 
+  /** Core tools from other modules, such as attach_files (files.ts). */
+  private extraCore: ToolDef[] = [];
+  addCoreTool(t: ToolDef): void {
+    this.extraCore.push({ ...t, category: "core" });
+  }
+
   private coreTools(): ToolDef[] {
     const svc = this.svc;
     return [
+      ...this.extraCore,
       {
         name: "chat_history",
         category: "core",
@@ -234,7 +245,7 @@ export class Gateway {
         run: async (a, ctx) =>
           svc
             .messages(ctx.chatId, undefined, Math.min(Number(a.limit) || 30, 100))
-            .map((m) => `[${new Date(m.ts).toISOString()}] ${this.authorName(m.authorType, m.authorId)}: ${m.body}`)
+            .map((m) => `[${new Date(m.ts).toISOString()}] ${this.authorName(m.authorType, m.authorId)}: ${m.body}${filesNote(m.meta)}`)
             .join("\n") || "(no messages)",
       },
       {

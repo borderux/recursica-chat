@@ -139,7 +139,7 @@ The operator commands in `server/src/cli.ts` write to stdout. They use `CIRCLECH
 
 | Command | Output |
 |---|---|
-| `node server/src/cli.ts backup` | A `.tar.gz` with a consistent copy of the database (`circlechat.db`, made with `VACUUM INTO`) and the `agents/` folder. No vault key. |
+| `node server/src/cli.ts backup` | A `.tar.gz` with a consistent copy of the database (`circlechat.db`, made with `VACUUM INTO`), the `agents/` folder and the `files/` folder. No vault key. |
 | `node server/src/cli.ts export` | The full data export as a `.tar.gz`: `workspace.json` (every table as JSON, password hashes and secret values left out), `circlechat.db`, `agents/` and a `README.txt`. The owner can download the same file in Settings, Server, Your data. |
 | `node server/src/cli.ts state` | `{"users":n,"agents":n,"workspace":"..."}` |
 | `node server/src/cli.ts set-password-hash <email>` | Reads an scrypt hash on stdin, sets it as that person's password and signs them out everywhere. Prints `ok`. |

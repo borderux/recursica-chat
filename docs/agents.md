@@ -80,8 +80,20 @@ The gateway gives every agent these CircleChat tools. They are always allowed.
 | `propose_plan` | Post a plan as a checklist. Each step becomes a task. |
 | `task_create` | Add a task to this chat. |
 | `task_update` | Set a task to `todo`, `working`, `needs_you`, `checking` or `done`. |
+| `attach_files` | Attach files to a message in this chat, and to a task. See [Attached files](#attached-files). |
 
 Connected apps and MCP servers add more tools where they are granted.
+
+### Attached files
+
+`attach_files` posts one message with files a person can download (`server/src/files.ts`).
+
+- **Each file is text the agent writes, or a file in the agent's own work folder.** The server copies the bytes into `data/files/`, so later changes in the work folder never reach the copy. A path stays inside the work folder, and a link anywhere on the path, or a file with more than one hard link, is refused.
+- **`markdown: true` on a `.txt` file also attaches a `.md` copy,** with the first paragraph as a heading and each speaker line's name in bold. The `.txt` holds the text exactly as written.
+- **`zip` packs the call's files into one zip.** With `task` and `include`, the zip also bundles files the same agent attached earlier in that task, by id: never another agent's file, or another task's. `chat_history` shows each file's id.
+- **Limits:** 10 MB a file, 20 files and 25 MB a message, and 1 GB for the workspace (the `files_max_bytes` setting). The types are `.txt`, `.md`, `.csv`, `.json`, `.pdf`, `.png`, `.jpg` and `.zip`. A zip from the work folder is read and never unpacked: every entry must be an allowed type, with no links, no folders above, no encryption, at most 50 entries and at most 50 MB unpacked.
+- **Downloads need a session and access to the chat.** `GET /api/files/:id` always answers as an attachment, as `application/octet-stream`, with `nosniff` and a sandbox policy, so a browser saves the file and never shows or runs it.
+- **Writing text needs no approval.** The server writes the file, so an agent set to ask first attaches a file it wrote as text without a person's approval. A file the agent writes in its container first needs the approval its autonomy asks for.
 
 ## Memory
 

@@ -451,3 +451,10 @@ mark { background: #FFF1B8; border-radius: 3px; color: inherit; }
 .working-mark i { width: 7px; height: 7px; border-radius: 50%; background: var(--working); animation: working-pulse 1.4s ease-in-out infinite; }
 @keyframes working-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .working-mark i { animation: none; } }
+
+/* files an agent attached (ui/files.tsx): download links, never previews */
+.file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; max-width: 560px; }
+.file-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; color: inherit; text-decoration: none; font-size: 13.5px; background: var(--them); }
+.file-chip:hover { border-color: currentColor; }
+.file-chip .file-size { opacity: 0.6; font-size: 12px; }
+li > .file-chips { flex-basis: 100%; margin: 6px 0 0 34px; }

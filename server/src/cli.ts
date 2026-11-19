@@ -57,6 +57,8 @@ if (cmd === "export") {
     app.db.exec(`VACUUM INTO '${join(root, "circlechat.db").replace(/'/g, "''")}'`);
     const agents = join(dataDir, "agents");
     if (existsSync(agents)) cpSync(agents, join(root, "agents"), { recursive: true });
+    const files = join(dataDir, "files"); // the files agents attached (files.ts)
+    if (existsSync(files)) cpSync(files, join(root, "files"), { recursive: true });
     const tar = spawn("tar", ["-czf", "-", "-C", root, "."], { stdio: ["ignore", "pipe", "inherit"] });
     await pipeTo(tar.stdout);
   } finally {

@@ -107,6 +107,8 @@ data/
         work/                   the agent's working folder
         .hermes/ .openclaw/ .config/opencode/ .codex/ ...
                                 engine config written by CircleChat at each start
+  files/
+    <file id>                   a file an agent attached (mode 600), listed in the files table
 ```
 
 Some engines keep state that needs a real Linux filesystem on a Docker named volume instead, for example `cc-<agent id>-hermes` for Hermes. Those volumes are not in the data folder.

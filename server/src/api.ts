@@ -13,6 +13,7 @@ import { sandboxProblem } from "./agents/sandboxes.ts";
 import { neverByName } from "./toolpolicy.ts";
 import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } from "./google.ts";
 import { handleTaken, registerProfile } from "./profile.ts";
+import { registerFiles } from "./files.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -206,6 +207,7 @@ export function buildApi(app: App): Hono<Env> {
 
   api.get("/api/me", (c) => c.json({ user: c.get("user") }));
   registerProfile(api, db);
+  registerFiles(api, db, app.cfg.dataDir, seesChat);
   api.patch("/api/me", async (c) => {
     const u = c.get("user");
     const b = await c.req.json();

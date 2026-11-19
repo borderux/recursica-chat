@@ -5,6 +5,7 @@ import { api, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { AgentAv, Empty, Icon, UserAv, WorkingMark } from "../ui/ui.tsx";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
+import { FileChips, useTaskFiles } from "../ui/files.tsx";
 
 const SECTIONS: [string, Task["status"][]][] = [
   ["Needs you", ["needs_you"]],
@@ -18,6 +19,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [assignee, setAssignee] = useState("");
+  const taskFiles = useTaskFiles();
   useEffect(() => {
     api
       .get("/api/tasks")
@@ -139,6 +141,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                           {t.assigneeType === "agent" && <AgentAv a={agent(t.assigneeId)} size={28} dot={false} />}
                           {t.assigneeType === "user" && <UserAv u={user(t.assigneeId)} size={28} />}
                         </span>
+                        <FileChips files={taskFiles[t.id]} />
                       </li>
                     ))}
                   </ul>
