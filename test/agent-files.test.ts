@@ -311,9 +311,12 @@ const plan = async (h: Harness, agent: any, chatId: string, steps: string[]) => 
   return /Task ids: (.*)$/.exec(r.text)![1].split(", ");
 };
 
-test("joinText: trailing newlines dropped from each part, one newline between, one at the end", () => {
-  assert.equal(joinText(["a\n\n", "b", "c\r\n"]), "a\nb\nc\n");
-  assert.equal(joinText(["only"]), "only\n");
+test("joinText: each part without blank lines at either end, one blank line between parts, one newline at the end", () => {
+  assert.equal(joinText(["a\n\n", "b", "\n\nc\r\n"]), "a\n\nb\n\nc\n");
+  assert.equal(joinText(["line 1\nline 2\n", "Speaker  00:10:02\ntext\n"]), "line 1\nline 2\n\nSpeaker  00:10:02\ntext\n", "a new turn after a blank line");
+  assert.equal(joinText(["  indented first line\n"]), "  indented first line\n", "spaces inside a line stay");
+  assert.equal(joinText(["a\r\nb\r\n", "", "  \n"]), "a\nb\n", "line ends become \\n, and an empty part is left out");
+  assert.equal(joinText([" ".repeat(200_000) + "x"]).length, 200_002, "a long run of spaces is quick");
 });
 
 test("parts on the task alone, then one joined .txt and .md, with the parts never posted in the chat", async () => {

@@ -14,8 +14,8 @@
 //   by id (`include`): in the same task, or in another task of the same plan, such as a plan's last
 //   step that bundles the set. Never another agent's, and never from outside the plan.
 // - `join` makes one text file from text files, in order: the included files first, then the given
-//   ones. Each part loses its trailing newlines, and the parts are joined with one newline, with
-//   one at the end. With `markdown`, a .txt join also gets a .md copy. So a long document can be
+//   ones. Each part loses the blank lines at either end, and the parts are joined with one blank
+//   line between them, and one newline at the end. With `markdown`, a .txt join also gets a .md copy. So a long document can be
 //   written in parts, each part checked, and joined without being written out again.
 // - `task_only` attaches the files to the task alone, with no message in the chat: the parts of a
 //   document, say, that would crowd the chat. Such a file's message id is empty.
@@ -329,9 +329,18 @@ export interface StoredFile {
   size: number;
 }
 
-/** Joins text parts: each part loses its trailing newlines, one newline between parts, one at the end. */
+/**
+ * Joins text parts: each part without blank lines at either end, one blank line between parts, and
+ * one newline at the end. Line ends become \n. A part with no text is left out.
+ */
 export function joinText(parts: string[]): string {
-  return parts.map((p) => p.replace(/(\r?\n)+$/, "")).join("\n") + "\n";
+  const trimmed = parts.map((p) => {
+    const lines = p.split(/\r?\n/);
+    while (lines.length && !lines[0].trim()) lines.shift();
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    return lines.join("\n");
+  });
+  return trimmed.filter(Boolean).join("\n\n") + "\n";
 }
 
 // ---------------------------------------------------------------- the tool
