@@ -45,6 +45,8 @@ export class AgentWorker {
   status: AgentStatus = { state: "stopped", detail: "", since: now(), heartbeat: 0 };
   private proc?: ChildProcessWithoutNullStreams;
   private conn?: AcpConnection;
+  /** the engine, model and sandbox the running process started with */
+  private startedAs = "";
   private starting?: Promise<void>;
   private sessions = new Map<string, SessionInfo>(); // chatId -> session
   private opening = new Map<string, Promise<SessionInfo>>(); // chatId -> session being opened
@@ -151,7 +153,11 @@ export class AgentWorker {
 
   // ---------------------------------------------------------------- process lifecycle
   async ensureStarted(): Promise<void> {
-    if (this.conn && !this.conn.isClosed) return;
+    if (this.conn && !this.conn.isClosed) {
+      // the engine, model or sandbox changed outside this process (cli.ts agent-set): start afresh
+      if (this.startedAs === launchKey(this.agent())) return;
+      await this.stop();
+    }
     if (!this.starting) this.starting = this.start().finally(() => (this.starting = undefined));
     return this.starting;
   }
@@ -162,6 +168,7 @@ export class AgentWorker {
     if (!engine) throw new Error(`unknown engine ${a.engine}`);
     const refused = startProblem(a.sandbox, engine);
     if (refused) throw new Error(refused);
+    this.startedAs = launchKey(a);
     this.setState("starting", `starting ${engine.name}`);
     this.stopping = false;
     const { home, work } = agentDirs(this.rt.opts.dataDir, a.id);
@@ -817,6 +824,8 @@ export class AgentRuntime {
     await Promise.all([...this.workers.values()].map((w) => w.stop()));
   }
 }
+
+const launchKey = (a: { engine: string; model: string; sandbox: string }) => `${a.engine}|${a.model}|${a.sandbox}`;
 
 export function pickProvider(all: ModelProvider[], kinds: ModelProvider["kind"][], model: string): ModelProvider | undefined {
   // a model may be written as "<provider>:<model>" to pin a provider

@@ -8,6 +8,10 @@
 //   node server/src/cli.ts end-sessions <email>           root only: signs that member out everywhere
 //   node server/src/cli.ts set-provider <id> --base-url <url> --models <a,b>   root only: key on stdin (cliprovider.ts)
 //   node server/src/cli.ts provider-key-hash <id>         root only: the SHA-256 of the provider's stored key
+//   node server/src/cli.ts manage|unmanage <handle>       root only: an agent whose settings come from a repository (managed.ts)
+//   node server/src/cli.ts agent-get <handle>             root only: a managed agent's settings as JSON
+//   node server/src/cli.ts agent-set <handle> [--check]   root only: settings as JSON on stdin
+//   node server/src/cli.ts agent-models                   root only: each agent's handle and model
 // Uses CIRCLECHAT_DATA like the server. Safe to run while the server is up (SQLite WAL).
 import { existsSync, readFileSync, mkdtempSync, mkdirSync, rmSync, cpSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -20,9 +24,10 @@ import { exportWorkspace } from "./hosting.ts";
 import { getSetting } from "./db.ts";
 import { asDataOwner, sessionArgs, memberSession, endSessions } from "./clisession.ts";
 import { providerArgs, setProvider, providerKeyHash } from "./cliprovider.ts";
+import { agentGet, agentModels, agentSet, manage, parseSettings } from "./managed.ts";
 
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
-const ROOT_ONLY = new Set(["session", "end-sessions", "set-provider", "provider-key-hash"]);
+const ROOT_ONLY = new Set(["session", "end-sessions", "set-provider", "provider-key-hash", "manage", "unmanage", "agent-get", "agent-set", "agent-models"]);
 if (ROOT_ONLY.has(process.argv[2])) {
   const refused = asDataOwner(dataDir);
   if (refused) {
@@ -118,8 +123,33 @@ if (cmd === "export") {
     console.error((e as Error).message);
     process.exit(3);
   }
+} else if (["manage", "unmanage", "agent-get", "agent-set", "agent-models"].includes(cmd)) {
+  try {
+    const handle = String(process.argv[3] ?? "");
+    const extra = process.argv.slice(4);
+    if (cmd === "agent-models") {
+      const out = agentModels(app.db);
+      if (out) process.stdout.write(out + "\n");
+    } else if (!handle || (cmd === "agent-set" ? extra.some((x) => x !== "--check") : extra.length)) {
+      throw new Error(`usage: cli.ts ${cmd} <handle>${cmd === "agent-set" ? " [--check]" : ""}`);
+    } else if (cmd === "manage" || cmd === "unmanage") {
+      console.error(`@${handle.replace(/^@/, "")}: ${manage(app.db, handle, cmd === "manage")}.`);
+    } else if (cmd === "agent-get") {
+      process.stdout.write(JSON.stringify(agentGet(app.db, handle)) + "\n");
+    } else {
+      const chunks: Buffer[] = [];
+      for await (const c of process.stdin) chunks.push(c as Buffer);
+      const settings = parseSettings(Buffer.concat(chunks).toString("utf8"), (app.providers(false) as any[]).map((p) => p.id));
+      const check = extra.includes("--check");
+      const changed = agentSet(app.db, handle, settings, { check });
+      process.stdout.write(changed.length ? `${check ? "would set" : "set"} ${changed.join(", ")}\n` : "up to date\n");
+    }
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(3);
+  }
 } else {
-  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id>");
+  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id> | manage|unmanage|agent-get <handle> | agent-set <handle> [--check] | agent-models");
   process.exit(2);
 }
 app.db.close();

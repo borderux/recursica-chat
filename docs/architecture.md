@@ -74,7 +74,7 @@ flowchart LR
 | Importer | `server/src/importer.ts` | Reads OpenClaw workspaces and Hermes homes. |
 | Hosting | `server/src/hosting.ts` | Proxy trust, the seed file, export, erase, the Docker bridge address, hosted sign-in. |
 | Files | `server/src/files.ts` | `attach_files`, the server's copy of each attached file, the download route. |
-| CLI | `server/src/cli.ts` | `export`, `backup`, `state`, `set-password-hash`, and the root-only `session` and `end-sessions` (`clisession.ts`), `set-provider` and `provider-key-hash` (`cliprovider.ts`). |
+| CLI | `server/src/cli.ts` | `export`, `backup`, `state`, `set-password-hash`, and the root-only `session` and `end-sessions` (`clisession.ts`), `set-provider` and `provider-key-hash` (`cliprovider.ts`), `manage`, `unmanage`, `agent-get`, `agent-set` and `agent-models` (`managed.ts`). |
 | Crypto | `server/src/crypto.ts` | scrypt passwords, the AES-256-GCM vault, ids, HMAC. |
 | Web app | `web/` | React and Vite. Talks to the API and the websocket. |
 | Desktop app | `desktop/` | A thin Electron shell around your server, with native notifications and a Dock badge. |
