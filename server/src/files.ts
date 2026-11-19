@@ -11,7 +11,14 @@
 // - A zip from the agent's folder is read, never unpacked: its table of contents must list allowed
 //   types only, with no links, no folders above, no encryption, and no zip bomb.
 // - `zip` packs a call's files into one zip, and can bundle files the same agent attached earlier
-//   in the same task, by id: never another agent's or another task's.
+//   by id (`include`): in the same task, or in another task of the same plan, such as a plan's last
+//   step that bundles the set. Never another agent's, and never from outside the plan.
+// - `join` makes one text file from text files, in order: the included files first, then the given
+//   ones. Each part loses its trailing newlines, and the parts are joined with one newline, with
+//   one at the end. With `markdown`, a .txt join also gets a .md copy. So a long document can be
+//   written in parts, each part checked, and joined without being written out again.
+// - `task_only` attaches the files to the task alone, with no message in the chat: the parts of a
+//   document, say, that would crowd the chat. Such a file's message id is empty.
 // - `markdown` on a .txt file also saves a .md copy with light formatting the server adds: the first
 //   paragraph as a heading, and each speaker line's name in bold.
 // - A download needs a session and a person who can see the chat. It is always served as an
@@ -69,11 +76,36 @@ export function fileTables(db: DB): void {
   db.exec(`
 CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, task_id TEXT NOT NULL DEFAULT '',
+  message_id TEXT REFERENCES messages(id) ON DELETE CASCADE, task_id TEXT NOT NULL DEFAULT '',
   agent_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS files_task ON files(task_id);
 CREATE INDEX IF NOT EXISTS files_chat ON files(chat_id);`);
+  // A task-only file has no message. A table from before task_only has message_id NOT NULL:
+  // rebuilt once, with every row kept.
+  const col = (db.prepare("PRAGMA table_info(files)").all() as any[]).find((c) => c.name === "message_id");
+  if (col?.notnull) {
+    // SQLite's way to change a column: foreign keys off around the rebuild, then on again
+    const fk = (db.prepare("PRAGMA foreign_keys").get() as any)?.foreign_keys;
+    db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      db.exec(`BEGIN;
+CREATE TABLE files_new (
+  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  message_id TEXT REFERENCES messages(id) ON DELETE CASCADE, task_id TEXT NOT NULL DEFAULT '',
+  agent_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+INSERT INTO files_new(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at)
+  SELECT id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at FROM files;
+DROP TABLE files;
+ALTER TABLE files_new RENAME TO files;
+CREATE INDEX IF NOT EXISTS files_task ON files(task_id);
+CREATE INDEX IF NOT EXISTS files_chat ON files(chat_id);
+COMMIT;`);
+    } finally {
+      if (fk) db.exec("PRAGMA foreign_keys = ON");
+    }
+  }
   ready.add(db);
 }
 
@@ -297,6 +329,11 @@ export interface StoredFile {
   size: number;
 }
 
+/** Joins text parts: each part loses its trailing newlines, one newline between parts, one at the end. */
+export function joinText(parts: string[]): string {
+  return parts.map((p) => p.replace(/(\r?\n)+$/, "")).join("\n") + "\n";
+}
+
 // ---------------------------------------------------------------- the tool
 interface Item {
   name: string;
@@ -312,7 +349,9 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
     description:
       "Attach files to a message in this chat, and to a task. Give each file's text with a name, or a path in your work folder. " +
       "markdown: true on a .txt file also attaches a .md copy. zip: a name packs every file into one zip. " +
-      "include: ids of files you attached earlier in the same task, to bundle them into the zip. Returns each file's id.",
+      "join: a .txt or .md name makes one text file from the included files, then the given ones, in order; markdown: true with it also attaches a .md copy. " +
+      "include: ids of files you attached earlier in this task or another task of the same plan, for the zip or the join. " +
+      "task_only: true attaches to the task alone, with no message in the chat. Returns each file's id.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -330,8 +369,11 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
             },
           },
         },
-        include: { type: "array", items: { type: "string" }, description: "ids of files you attached earlier in this task, for the zip" },
+        include: { type: "array", items: { type: "string" }, description: "ids of files you attached earlier in this task or in another task of the same plan, for the zip or the join" },
         zip: { type: "string", description: "a name such as transcripts.zip: attach one zip holding every file" },
+        join: { type: "string", description: "a name such as notes.txt: attach one text file joining the included files, then the given ones, in order" },
+        markdown: { type: "boolean", description: "with join and a .txt name: also attach a .md copy of the joined file" },
+        task_only: { type: "boolean", description: "with task: attach to the task alone, with no message in the chat" },
         task: { type: "string", description: "a task id in this chat, to attach the files to the task too" },
         note: { type: "string", description: "a short line to go with the files" },
       },
@@ -342,12 +384,18 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
       const include: string[] = Array.isArray(a.include) ? a.include.map(String) : [];
       if (!files.length && !include.length) fail("give files, or include with zip");
       let taskId = "";
+      let planId = "";
       if (a.task) {
-        const t = db.prepare("SELECT id, chat_id FROM tasks WHERE id = ?").get(String(a.task)) as any;
+        const t = db.prepare("SELECT id, chat_id, plan_id FROM tasks WHERE id = ?").get(String(a.task)) as any;
         if (!t || t.chat_id !== ctx.chatId) fail(`there is no task ${String(a.task)} in this chat`);
         taskId = t.id;
+        planId = t.plan_id ?? "";
       }
-      if (include.length && (!taskId || !a.zip)) fail("include needs task and zip: it bundles files you attached earlier in that task");
+      if (a.zip && a.join) fail("give zip or join, not both");
+      if (include.length && (!taskId || !(a.zip || a.join))) fail("include needs task, and zip or join: it bundles files you attached earlier in that task or its plan");
+      if (a.task_only && !taskId) fail("task_only needs task");
+      if (a.markdown && !a.join) fail("markdown on its own goes with join; for one file, set markdown on the file");
+      if (a.join && files.some((f) => f?.markdown)) fail("with join, set markdown once, next to join");
       const items: Item[] = [];
       for (const f of files) {
         const hasText = typeof f?.text === "string";
@@ -371,12 +419,29 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
           items.push({ name, data });
         }
       }
+      // the included files come first, in the order given, then the given ones
+      const included: Item[] = [];
+      const inPlan = (tid: string) => !!planId && (db.prepare("SELECT plan_id FROM tasks WHERE id = ?").get(tid) as any)?.plan_id === planId;
       for (const fid of include) {
         const r = db.prepare("SELECT id, name, agent_id, task_id, chat_id FROM files WHERE id = ?").get(fid) as any;
-        if (!r || r.agent_id !== ctx.agent.id || r.task_id !== taskId || r.chat_id !== ctx.chatId) fail(`${fid} is not a file you attached in this task`);
-        items.push({ name: r.name, data: readFileSync(join(filesDir(dataDir), r.id)) });
+        if (!r || r.agent_id !== ctx.agent.id || r.chat_id !== ctx.chatId || !(r.task_id === taskId || inPlan(r.task_id)))
+          fail(`${fid} is not a file you attached in this task or its plan`);
+        included.push({ name: r.name, data: readFileSync(join(filesDir(dataDir), r.id)) });
       }
+      items.unshift(...included);
       let out: Item[] = items;
+      if (a.join) {
+        const name = safeName(a.join);
+        if (!["txt", "md"].includes(ext(name))) fail(`${name}: join makes a .txt or .md file`);
+        if (!items.length) fail("join needs files to join");
+        for (const it of items) if (!TEXT_TYPES.has(ext(it.name))) fail(`${it.name}: join takes text files only`);
+        const text = joinText(items.map((it) => it.data.toString("utf8")));
+        out = [{ name, data: Buffer.from(text, "utf8") }];
+        if (a.markdown) {
+          if (ext(name) !== "txt") fail(`${name}: markdown makes a copy of a .txt file only`);
+          out.push({ name: name.replace(/\.txt$/i, ".md"), data: Buffer.from(transcriptMarkdown(text), "utf8") });
+        }
+      }
       if (a.zip) {
         const name = safeName(a.zip);
         if (ext(name) !== "zip") fail(`${name}: zip needs a name ending in .zip`);
@@ -408,6 +473,12 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
       const note = String(a.note ?? "")
         .trim()
         .slice(0, 500);
+      const ins = db.prepare("INSERT INTO files(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at) VALUES(?,?,?,?,?,?,?,?,?)");
+      if (a.task_only) {
+        for (const b of blobs) ins.run(b.id, ctx.chatId, null, taskId, ctx.agent.id, b.name, b.data.length, b.sha256, now());
+        svc.updateTask(taskId, {}); // the task changed: views showing its files refresh
+        return `Attached ${stored.map((f) => `${f.name} (${f.id})`).join(", ")} to the task only.`;
+      }
       const msg = svc.insertMessage({
         chatId: ctx.chatId,
         authorType: "agent",
@@ -416,7 +487,6 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
         body: note || (stored.length === 1 ? `Attached ${stored[0].name}.` : `Attached ${stored.length} files.`),
         meta: { files: stored, ...(taskId ? { taskId } : {}) },
       });
-      const ins = db.prepare("INSERT INTO files(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at) VALUES(?,?,?,?,?,?,?,?,?)");
       for (const b of blobs) ins.run(b.id, ctx.chatId, msg.id, taskId, ctx.agent.id, b.name, b.data.length, b.sha256, now());
       return `Attached ${stored.map((f) => `${f.name} (${f.id})`).join(", ")}${taskId ? ` to the message and the task` : ""}.`;
     },

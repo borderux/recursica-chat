@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // attach_files and the download route (server/src/files.ts): a safe copy from the agent's own work
 // folder, the limits, zips in and out, files on a task, bundling an agent's own earlier files, the
-// .md copy, downloads that are always attachments, and backups.
+// .md copy, downloads that are always attachments, and backups. Then a document written in parts:
+// parts on the task alone, joined into one file, and a plan's last step bundling the set.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startApp, setupOwner, mockAgent, type Harness, type Client } from "./helpers.ts";
-import { checkZip, makeZip, safeName, sweepFiles, transcriptMarkdown, LIMITS } from "../server/src/files.ts";
+import { checkZip, fileTables, joinText, makeZip, safeName, sweepFiles, transcriptMarkdown, LIMITS } from "../server/src/files.ts";
+import { DatabaseSync } from "node:sqlite";
 import { memberSession } from "../server/src/clisession.ts";
 import { agentDirs } from "../server/src/agents/engines.ts";
 import { setSetting } from "../server/src/db.ts";
@@ -235,8 +237,8 @@ test("a set on a task: one transcript per call, then a zip of the agent's own ea
     for (const [args, why] of [
       [{ include: [theirId], zip: "z.zip", task: task.id }, /not a file you attached in this task/],
       [{ include: [elseId], zip: "z.zip", task: task.id }, /not a file you attached in this task/],
-      [{ include: [ids[0]], zip: "z.zip" }, /include needs task and zip/],
-      [{ include: [ids[0]], task: task.id }, /include needs task and zip/],
+      [{ include: [ids[0]], zip: "z.zip" }, /include needs task, and zip or join/],
+      [{ include: [ids[0]], task: task.id }, /include needs task, and zip or join/],
       [{ files: [{ name: "a.txt", text: "x" }], task: "t_nothere" }, /no task t_nothere in this chat/],
     ] as const) {
       const r = await call(args);
@@ -295,4 +297,113 @@ test("backups hold the attached files, and a stored file whose row is gone is sw
   } finally {
     await h.close();
   }
+});
+
+const PART_1 = "SYNTHETIC: made up for a test.\nNo real person said any of this.\nA made-up gadget, interview 1 of 1, Researcher and Pat Example, 20 min\n\nResearcher  00:00:05\nTell me about the last time you used it.\n\n";
+const PART_2 = "Pat Example  00:10:02\nUm, so, I- I mostly use it on Tuesdays.\n";
+const idsIn = (text: string) => [...text.matchAll(/\((f_[\w-]+)\)/g)].map((x) => x[1]);
+const plan = async (h: Harness, agent: any, chatId: string, steps: string[]) => {
+  const r = await h.app.gateway.call(
+    "propose_plan",
+    { title: "A made-up set", steps: steps.map((title) => ({ title, assignee: agent.handle })) },
+    { agent: h.app.svc.agent(agent.id)!, chatId, requester: { type: "user", id: "" } },
+  );
+  return /Task ids: (.*)$/.exec(r.text)![1].split(", ");
+};
+
+test("joinText: trailing newlines dropped from each part, one newline between, one at the end", () => {
+  assert.equal(joinText(["a\n\n", "b", "c\r\n"]), "a\nb\nc\n");
+  assert.equal(joinText(["only"]), "only\n");
+});
+
+test("parts on the task alone, then one joined .txt and .md, with the parts never posted in the chat", async () => {
+  const { h, c, chat, call } = await setup();
+  try {
+    const task = (await c.post("/api/tasks", { chatId: chat.id, title: "One transcript in parts" })).json.task;
+    const before = (await c.get(`/api/chats/${chat.id}/messages`)).json.messages.length;
+    const parts: string[] = [];
+    for (const [n, text] of [[1, PART_1], [2, PART_2]] as const) {
+      const r = await call({ files: [{ name: `gadget-interview-1-part-${n}.txt`, text }], task: task.id, task_only: true });
+      assert.equal(r.isError, false, r.text);
+      assert.match(r.text, /to the task only/);
+      parts.push(...idsIn(r.text));
+    }
+    assert.equal((await c.get(`/api/chats/${chat.id}/messages`)).json.messages.length, before, "no message in the chat");
+    const listed = (await c.get(`/api/files?task=${task.id}`)).json.files as any[];
+    assert.deepEqual(listed.map((f) => f.messageId), [null, null], "task-only files have no message");
+    assert.equal((await download(h, c, parts[1])).status, 200, "and download like any other");
+
+    const joined = await call({ include: parts, join: "gadget-interview-1-of-1.txt", markdown: true, task: task.id });
+    assert.equal(joined.isError, false, joined.text);
+    const m = await lastFiles(c, chat.id);
+    assert.deepEqual(m.meta.files.map((f: any) => f.name), ["gadget-interview-1-of-1.txt", "gadget-interview-1-of-1.md"]);
+    const txt = await (await download(h, c, m.meta.files[0].id)).text();
+    assert.equal(txt, joinText([PART_1, PART_2]), "the parts, joined, exactly");
+    assert.equal(await (await download(h, c, m.meta.files[1].id)).text(), transcriptMarkdown(txt));
+
+    for (const [args, why] of [
+      [{ files: [{ name: "a.txt", text: "x" }], task_only: true }, /task_only needs task/],
+      [{ include: parts, join: "x.txt", zip: "x.zip", task: task.id }, /zip or join, not both/],
+      [{ files: [{ name: "a.txt", text: "x" }], markdown: true }, /markdown on its own goes with join/],
+      [{ files: [{ name: "a.txt", text: "x", markdown: true }], join: "x.txt" }, /set markdown once, next to join/],
+      [{ include: parts, join: "x.pdf", task: task.id }, /join makes a \.txt or \.md file/],
+      [{ include: parts, join: "x.md", markdown: true, task: task.id }, /markdown makes a copy of a \.txt file only/],
+    ] as const) {
+      const r = await call(args);
+      assert.equal(r.isError, true, JSON.stringify(args));
+      assert.match(r.text, why);
+    }
+    const zipped = await call({ include: parts, zip: "parts.zip", task: task.id });
+    const zipId = idsIn(zipped.text)[0];
+    const r = await call({ include: [zipId], join: "x.txt", task: task.id });
+    assert.equal(r.isError, true);
+    assert.match(r.text, /join takes text files only/);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a plan's last step bundles files from the plan's other steps, never from outside the plan", async () => {
+  const { h, c, chat, call, agent } = await setup();
+  try {
+    const [first, second, last] = await plan(h, agent, chat.id, ["Interview 1 of 2", "Interview 2 of 2", "Zip the set"]);
+    const [elsewhere] = await plan(h, agent, chat.id, ["Another plan"]);
+    const loose = (await c.post("/api/tasks", { chatId: chat.id, title: "Not in a plan" })).json.task;
+    const ids: string[] = [];
+    for (const [n, tid] of [[1, first], [2, second]] as const) {
+      ids.push(...idsIn((await call({ files: [{ name: `gadget-interview-${n}-of-2.txt`, text: TRANSCRIPT, markdown: true }], task: tid })).text));
+    }
+    const zipped = await call({ include: ids, zip: "gadget-transcripts.zip", task: last });
+    assert.equal(zipped.isError, false, zipped.text);
+    const m = await lastFiles(c, chat.id);
+    const zip = Buffer.from(await (await download(h, c, m.meta.files[0].id)).arrayBuffer());
+    assert.equal(checkZip(zip).length, 4);
+
+    const outside = idsIn((await call({ files: [{ name: "else.txt", text: "x" }], task: elsewhere })).text)[0];
+    const unplanned = idsIn((await call({ files: [{ name: "loose.txt", text: "x" }], task: loose.id })).text)[0];
+    for (const fid of [outside, unplanned]) {
+      const r = await call({ include: [fid], zip: "z.zip", task: last });
+      assert.equal(r.isError, true, fid);
+      assert.match(r.text, /not a file you attached in this task or its plan/);
+    }
+    const r = await call({ include: [ids[0]], zip: "z.zip", task: loose.id });
+    assert.equal(r.isError, true, "a task outside any plan reaches only its own files");
+  } finally {
+    await h.close();
+  }
+});
+
+test("a files table from before task_only is rebuilt once, with every row kept", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE chats (id TEXT PRIMARY KEY); CREATE TABLE messages (id TEXT PRIMARY KEY);");
+  db.exec(`CREATE TABLE files (
+  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, message_id TEXT NOT NULL, task_id TEXT NOT NULL DEFAULT '',
+  agent_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL
+);`);
+  db.prepare("INSERT INTO files VALUES (?,?,?,?,?,?,?,?,?)").run("f_one", "c_one", "m_one", "t_one", "a_one", "one.txt", 3, "abc", 1);
+  fileTables(db as any);
+  const col = (db.prepare("PRAGMA table_info(files)").all() as any[]).find((x) => x.name === "message_id");
+  assert.equal(col.notnull, 0);
+  assert.deepEqual({ ...(db.prepare("SELECT id, message_id, name FROM files").get() as any) }, { id: "f_one", message_id: "m_one", name: "one.txt" });
+  db.close();
 });
