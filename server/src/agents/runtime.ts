@@ -818,12 +818,14 @@ export class AgentRuntime {
   }
 }
 
-function pickProvider(all: ModelProvider[], kinds: ModelProvider["kind"][], model: string): ModelProvider | undefined {
+export function pickProvider(all: ModelProvider[], kinds: ModelProvider["kind"][], model: string): ModelProvider | undefined {
   // a model may be written as "<provider>:<model>" to pin a provider
   const [pid, m] = model.includes(":") ? model.split(/:(.*)/s) : ["", model];
   if (pid) {
     const p = all.find((x) => x.id === pid);
     if (p) return { ...p, models: m ? [m, ...p.models.filter((x) => x !== m)] : p.models };
+    // a pinned provider that's gone never falls back to another one, with another key
+    throw new Error(`the model ${model} names the provider "${pid}", which doesn't exist. Add the provider, or pick another model.`);
   }
   return all.find((p) => kinds.includes(p.kind));
 }

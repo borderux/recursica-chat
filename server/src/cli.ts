@@ -6,6 +6,8 @@
 //   node server/src/cli.ts set-password-hash <email>   new scrypt hash on stdin; signs that person out everywhere
 //   node server/src/cli.ts session <email> [--minutes N]   root only: a session of at most an hour for a member (clisession.ts)
 //   node server/src/cli.ts end-sessions <email>           root only: signs that member out everywhere
+//   node server/src/cli.ts set-provider <id> --base-url <url> --models <a,b>   root only: key on stdin (cliprovider.ts)
+//   node server/src/cli.ts provider-key-hash <id>         root only: the SHA-256 of the provider's stored key
 // Uses CIRCLECHAT_DATA like the server. Safe to run while the server is up (SQLite WAL).
 import { existsSync, readFileSync, mkdtempSync, mkdirSync, rmSync, cpSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -17,9 +19,11 @@ import { REPO_ROOT } from "./agents/engines.ts";
 import { exportWorkspace } from "./hosting.ts";
 import { getSetting } from "./db.ts";
 import { asDataOwner, sessionArgs, memberSession, endSessions } from "./clisession.ts";
+import { providerArgs, setProvider, providerKeyHash } from "./cliprovider.ts";
 
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
-if (process.argv[2] === "session" || process.argv[2] === "end-sessions") {
+const ROOT_ONLY = new Set(["session", "end-sessions", "set-provider", "provider-key-hash"]);
+if (ROOT_ONLY.has(process.argv[2])) {
   const refused = asDataOwner(dataDir);
   if (refused) {
     console.error(refused);
@@ -94,8 +98,26 @@ if (cmd === "export") {
     console.error((e as Error).message);
     process.exit(3);
   }
+} else if (cmd === "set-provider" || cmd === "provider-key-hash") {
+  try {
+    if (cmd === "set-provider") {
+      const p = providerArgs(process.argv.slice(3));
+      const chunks: Buffer[] = [];
+      for await (const c of process.stdin) chunks.push(c as Buffer);
+      const done = setProvider(app, p, Buffer.concat(chunks).toString("utf8"));
+      console.error(`Provider ${p.id} ${done}.`);
+    } else {
+      const id = String(process.argv[3] ?? "");
+      if (!id || process.argv.length > 4) throw new Error("usage: cli.ts provider-key-hash <id>");
+      const h = providerKeyHash(app, id);
+      if (h) process.stdout.write(h + "\n");
+    }
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(3);
+  }
 } else {
-  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email>");
+  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id>");
   process.exit(2);
 }
 app.db.close();
