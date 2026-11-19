@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // JSON API used by the web and desktop apps.
 import { Hono, type Context } from "hono";
+import { contextStorage, tryGetContext } from "hono/context-storage";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ import { DEACTIVATED, deactivatedIds, isDeactivated, registerDeactivation } from
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
+import { statusSeenBy } from "./eventfilter.ts";
 import { APP_CATALOG, preset, presetConfig, checkPreset } from "./apps.ts";
 import { requestIsHttps, exportWorkspace, eraseWorkspace, hosting, useSsoToken, hostingFetch } from "./hosting.ts";
 
@@ -86,6 +88,7 @@ export function buildApi(app: App): Hono<Env> {
   const loginLimiter = new FailureLimiter({ ip: 20, acct: 10 });
   const { db, svc, gateway } = app;
   const api = new Hono<Env>();
+  api.use(contextStorage()); // statusFor reads who is asking
 
   api.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message }, err.status as any);
@@ -271,7 +274,12 @@ export function buildApi(app: App): Hono<Env> {
   });
 
   // ---------------------------------------------------------------- agents
-  const agentOut = (a: any) => ({ ...a, status: app.runtime.statusOf(a.id), monthCostMicros: svc.monthCostMicros(a.id), managed: managedSince(db, a.id) !== null });
+  // an agent's status: the detail and chat only for people who can see that chat (eventfilter.ts)
+  const statusFor = (aid: string) => {
+    const u = tryGetContext<Env>()?.get("user");
+    return statusSeenBy(app.runtime.statusOf(aid), (cid) => !!u && seesChat(u, cid));
+  };
+  const agentOut = (a: any) => ({ ...a, status: statusFor(a.id), monthCostMicros: svc.monthCostMicros(a.id), managed: managedSince(db, a.id) !== null });
   api.get("/api/agents", (c) => c.json({ agents: svc.agents().map(agentOut) }));
   api.get("/api/agents/:id", (c) => {
     const a = svc.agent(c.req.param("id"));
@@ -404,7 +412,7 @@ export function buildApi(app: App): Hono<Env> {
       await w.stop();
       await w.ensureStarted();
     }
-    return c.json({ status: app.runtime.statusOf(a.id) });
+    return c.json({ status: statusFor(a.id) });
   });
   api.post("/api/agents/:id/new-session", async (c) => {
     requireRole(c.get("user"), "builder");
@@ -424,7 +432,7 @@ export function buildApi(app: App): Hono<Env> {
     const builder = RANK[u.role] >= RANK.builder;
     const ok = (cid: string | undefined) => (cid ? seesChat(u, cid, ids) : builder);
     return c.json({
-      status: app.runtime.statusOf(a.id),
+      status: statusFor(a.id),
       activity: app.runtime
         .worker(a.id)
         .recentActivity(Number(c.req.query("limit") ?? 300))

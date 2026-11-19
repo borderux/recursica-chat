@@ -9,6 +9,7 @@ import { buildApi, staticHandler } from "./api.ts";
 import { REPO_ROOT } from "./agents/engines.ts";
 import { allowedOrigins, originProblem } from "./origin.ts";
 import { isDeactivated } from "./deactivate.ts";
+import { eventFor } from "./eventfilter.ts";
 
 function readBody(req: IncomingMessage, limit = 2_000_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -126,13 +127,15 @@ export function createHttpServer(app: App): HttpServer {
       const c = app.svc.chat(chatId);
       return !!c && (c.kind === "agents" || app.svc.isMember(chatId, "user", uid));
     };
+    const role = (app.db.prepare("SELECT role FROM users WHERE id = ?").get(uid) as any)?.role;
+    const viewer = { userId: uid, isAdmin: role === "admin" || role === "owner", seesChat: visible };
     const off = app.bus.onEvent((e) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       // a deactivated person's live connections close at once (deactivate.ts)
       if (e.type === "person" && e.userId === uid && e.deactivated) return ws.close(4003, "deactivated");
-      if ("chatId" in e && e.chatId && !visible(e.chatId)) return;
-      if (e.type === "chat" && !visible((e.chat as any).id)) return;
-      ws.send(JSON.stringify(e));
+      const seen = eventFor(e, viewer); // eventfilter.ts: the same rule as the REST routes
+      if (!seen) return;
+      ws.send(JSON.stringify(seen));
     });
     const ping = setInterval(() => ws.readyState === WebSocket.OPEN && ws.ping(), 25_000);
     ws.on("close", () => {
