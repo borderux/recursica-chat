@@ -145,6 +145,8 @@ The operator commands in `server/src/cli.ts` write to stdout. They use `CIRCLECH
 | `node server/src/cli.ts set-password-hash <email>` | Reads an scrypt hash on stdin, sets it as that person's password and signs them out everywhere. Prints `ok`. |
 | `sudo node server/src/cli.ts session <email> [--minutes N]` | **Root only.** A new session for a member or builder, never an owner or admin, lasting `N` minutes (1 to 60, default 60). Prints only the session's token, which works as `Authorization: Bearer <token>`. For a check that drives the API while password sign-in is off. The command runs as the data folder's owner. |
 | `sudo node server/src/cli.ts end-sessions <email>` | **Root only.** Ends every session of that member or builder. |
+| `sudo node server/src/cli.ts set-provider <id> --base-url <url> --models <a,b>` | **Root only.** Adds or updates an OpenAI-compatible provider, with the key read from stdin, never from an argument. Empty stdin keeps the stored key. Changes only a provider this command made, never one added in the app. |
+| `sudo node server/src/cli.ts provider-key-hash <id>` | **Root only.** Prints the SHA-256 of the provider's stored key, or nothing, so a script can tell whether the key is current without reading the key. |
 
 A nightly backup with cron:
 
