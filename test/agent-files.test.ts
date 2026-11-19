@@ -58,7 +58,7 @@ test("text: the .txt exactly as written and a .md copy, on one message, download
   try {
     const r = await call({ files: [{ name: "gadget-interview-1-of-2.txt", text: TRANSCRIPT, markdown: true }], note: "1 synthetic transcript." });
     assert.equal(r.isError, false, r.text);
-    assert.match(r.text, /gadget-interview-1-of-2\.txt \(f_\w+\), gadget-interview-1-of-2\.md \(f_\w+\)/);
+    assert.match(r.text, /gadget-interview-1-of-2\.txt \(f_[\w-]+\), gadget-interview-1-of-2\.md \(f_[\w-]+\)/);
     const m = await lastFiles(c, chat.id);
     assert.equal(m.body, "1 synthetic transcript.");
     assert.deepEqual(
@@ -201,7 +201,7 @@ test("a set on a task: one transcript per call, then a zip of the agent's own ea
       const r = await call({ files: [{ name: `gadget-interview-${n}-of-2.txt`, text: TRANSCRIPT, markdown: true }], task: task.id });
       assert.equal(r.isError, false, r.text);
       assert.match(r.text, /to the message and the task/);
-      ids.push(...[...r.text.matchAll(/\((f_\w+)\)/g)].map((x) => x[1]));
+      ids.push(...[...r.text.matchAll(/\((f_[\w-]+)\)/g)].map((x) => x[1]));
     }
     const listed = (await c.get(`/api/files?task=${task.id}`)).json.files;
     assert.equal(listed.length, 4);
@@ -229,9 +229,9 @@ test("a set on a task: one transcript per call, then a zip of the agent's own ea
     const helper = await mockAgent(c, "helper");
     await c.post(`/api/chats/${chat.id}/members`, { type: "agent", id: helper.id });
     const theirs = await call({ files: [{ name: "theirs.txt", text: "x" }], task: task.id }, helper);
-    const theirId = /\((f_\w+)\)/.exec(theirs.text)?.[1];
+    const theirId = /\((f_[\w-]+)\)/.exec(theirs.text)?.[1];
     const otherTask = await call({ files: [{ name: "else.txt", text: "x" }], task: other.id });
-    const elseId = /\((f_\w+)\)/.exec(otherTask.text)?.[1];
+    const elseId = /\((f_[\w-]+)\)/.exec(otherTask.text)?.[1];
     for (const [args, why] of [
       [{ include: [theirId], zip: "z.zip", task: task.id }, /not a file you attached in this task/],
       [{ include: [elseId], zip: "z.zip", task: task.id }, /not a file you attached in this task/],
