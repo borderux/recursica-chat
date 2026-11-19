@@ -73,6 +73,7 @@ flowchart LR
 | Slack bridge | `server/src/bridges/slack.ts` | Mirrors a Slack channel and a chat over Socket Mode. |
 | Importer | `server/src/importer.ts` | Reads OpenClaw workspaces and Hermes homes. |
 | Hosting | `server/src/hosting.ts` | Proxy trust, the seed file, export, erase, the Docker bridge address, hosted sign-in. |
+| Files | `server/src/files.ts` | `attach_files`, the server's copy of each attached file, the download route. |
 | CLI | `server/src/cli.ts` | `export`, `backup`, `state`, `set-password-hash`, and the root-only `session` and `end-sessions` (`clisession.ts`), `set-provider` and `provider-key-hash` (`cliprovider.ts`). |
 | Crypto | `server/src/crypto.ts` | scrypt passwords, the AES-256-GCM vault, ids, HMAC. |
 | Web app | `web/` | React and Vite. Talks to the API and the websocket. |

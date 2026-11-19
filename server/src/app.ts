@@ -9,7 +9,8 @@ import { Bus } from "./bus.ts";
 import { Services } from "./services.ts";
 import { Gateway } from "./gateway.ts";
 import { AgentRuntime } from "./agents/runtime.ts";
-import { ENGINES, dockerfileFor, REPO_ROOT, type ModelProvider } from "./agents/engines.ts";
+import { ENGINES, agentDirs, dockerfileFor, REPO_ROOT, type ModelProvider } from "./agents/engines.ts";
+import { attachFilesTool } from "./files.ts";
 import { Triggers } from "./triggers.ts";
 import { SlackBridge } from "./bridges/slack.ts";
 
@@ -55,6 +56,7 @@ export class App {
     this.vault = new Vault(cfg.masterKey);
     this.svc = new Services(this.db, this.bus);
     this.gateway = new Gateway(this.db, this.svc, this.vault, { approvalTimeoutMs: cfg.approvalTtlMs });
+    this.gateway.addCoreTool(attachFilesTool({ db: this.db, svc: this.svc, dataDir: cfg.dataDir, workOf: (aid) => agentDirs(cfg.dataDir, aid).work }));
     this.runtime = new AgentRuntime(this.db, this.svc, this.gateway, this.bus, {
       dataDir: cfg.dataDir,
       idleSleepMs: cfg.idleSleepMs ?? 15 * 60_000,

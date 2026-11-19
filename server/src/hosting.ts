@@ -14,6 +14,7 @@ import type { App } from "./app.ts";
 import { now, setSetting, getSetting, json } from "./db.ts";
 import { id, hashPassword, hmac, safeEqual, token as randomToken } from "./crypto.ts";
 import { ENGINES, agentDirs } from "./agents/engines.ts";
+import { fileTables } from "./files.ts";
 
 const execFileP = promisify(execFile);
 
@@ -200,6 +201,7 @@ const EXPORT_TABLES = [
   "usage",
   "bridges",
   "deliveries",
+  "files",
 ];
 
 /**
@@ -209,6 +211,7 @@ const EXPORT_TABLES = [
  *   agents/<id>/     each agent's home folder (memory, skills, work files)
  */
 export async function exportWorkspace(app: App): Promise<{ stream: ReadableStream; filename: string; cleanup: () => void }> {
+  fileTables(app.db); // the CLI's export can run before the server ever made the table
   const dir = mkdtempSync(join(tmpdir(), "cc-export-"));
   const root = join(dir, "circlechat-export");
   mkdirSync(root);
@@ -226,10 +229,12 @@ export async function exportWorkspace(app: App): Promise<{ stream: ReadableStrea
   app.db.exec(`VACUUM INTO '${join(root, "circlechat.db").replace(/'/g, "''")}'`);
   const agentsDir = join(app.cfg.dataDir, "agents");
   if (existsSync(agentsDir)) cpSync(agentsDir, join(root, "agents"), { recursive: true, dereference: false, filter: (src) => !/\/node_modules(\/|$)/.test(src) });
+  const filesDir = join(app.cfg.dataDir, "files");
+  if (existsSync(filesDir)) cpSync(filesDir, join(root, "files"), { recursive: true });
   writeFileSync(
     join(root, "README.txt"),
     "RecursicaChat workspace export.\n\nworkspace.json: all chats, messages, tasks, memories, agents, people and settings as JSON.\n" +
-      "circlechat.db: a copy of the SQLite database. Stored keys stay encrypted.\nagents/: each agent's home folder.\n",
+      "circlechat.db: a copy of the SQLite database. Stored keys stay encrypted.\nagents/: each agent's home folder.\nfiles/: the files agents attached, named by id (the files table).\n",
   );
   const tar = spawn("tar", ["-czf", "-", "-C", dir, "circlechat-export"], { stdio: ["ignore", "pipe", "pipe"] });
   const cleanup = () => rmSync(dir, { recursive: true, force: true });

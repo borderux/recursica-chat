@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Chat list, conversation, composer with @mentions, group info drawer, new chat.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as RKE, type ReactNode } from "react";
+import { FileChips } from "../ui/files.tsx";
 import { api, type Agent, type Approval, type Chat, type Member, type Message, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
@@ -490,6 +491,7 @@ function Bubble({ m, first, last, mine, dm, approvals }: { m: Message; first: bo
       <div className="stackm">
         {showName && <span className="name">{name}</span>}
         {content}
+        <FileChips files={m.meta?.files} />
         {last && (
           <span className="meta">
             <time>{hhmm(m.ts)}</time>
