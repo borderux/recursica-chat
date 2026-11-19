@@ -74,6 +74,8 @@ export interface Agent {
   createdAt: number;
   status: AgentStatus;
   monthCostMicros: number;
+  /** its instructions, model, autonomy, sandbox and budget come from a repository (server/src/managed.ts) */
+  managed?: boolean;
 }
 export interface Member {
   type: "user" | "agent";

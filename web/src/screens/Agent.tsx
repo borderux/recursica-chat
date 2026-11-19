@@ -204,6 +204,10 @@ export function ProfileScreen({ id }: { id: string }) {
     </button>
   );
   const engineDirty = draft.engine !== a.engine || draft.model !== a.model || draft.sandbox !== a.sandbox;
+  // a managed agent's instructions, model, autonomy, sandbox and budget come from the repository
+  const locked = !!a.managed;
+  const canSet = isBuilder && !locked;
+  const fromRepo = <div className="hint">Set by the repository. Changes here are refused.</div>;
   const engineList = engines.some((e) => e.id === a.engine) ? engines : [{ id: a.engine, name: a.engine.startsWith("mock") ? "Test engine" : a.engine } as EngineInfo, ...engines];
 
   return (
@@ -268,13 +272,14 @@ export function ProfileScreen({ id }: { id: string }) {
             <label className="label" style={{ marginTop: 14 }}>
               What should {a.name} know?
             </label>
-            <textarea className="input" style={{ minHeight: 120 }} value={draft.instructions} onChange={(e) => setDraft({ ...draft, instructions: e.target.value })} disabled={!isBuilder} placeholder="How it works, what it should never do, who to ask." />
+            <textarea className="input" style={{ minHeight: 120 }} value={draft.instructions} onChange={(e) => setDraft({ ...draft, instructions: e.target.value })} disabled={!canSet} readOnly={locked} placeholder="How it works, what it should never do, who to ask." />
+            {locked && fromRepo}
             {isBuilder && (
               <div className="row" style={{ marginTop: 10, justifyContent: "flex-end" }}>
                 <button
                   className="btn primary sm"
-                  disabled={draft.instructions === a.instructions && draft.name === a.name && draft.roleTitle === a.roleTitle}
-                  onClick={() => patch({ instructions: draft.instructions, name: draft.name, roleTitle: draft.roleTitle })}
+                  disabled={(locked || draft.instructions === a.instructions) && draft.name === a.name && draft.roleTitle === a.roleTitle}
+                  onClick={() => patch(locked ? { name: draft.name, roleTitle: draft.roleTitle } : { instructions: draft.instructions, name: draft.name, roleTitle: draft.roleTitle })}
                 >
                   Save
                 </button>
@@ -283,7 +288,8 @@ export function ProfileScreen({ id }: { id: string }) {
           </div>
 
           <div className="sect">How much {a.name} does on its own</div>
-          <Seg full value={a.autonomy} options={AUTONOMY} onChange={(v) => isBuilder && patch({ autonomy: v }, "Updated")} />
+          <Seg full value={a.autonomy} options={AUTONOMY} onChange={(v) => canSet && patch({ autonomy: v }, "Updated")} />
+          {locked && fromRepo}
           <div className="hint">
             {a.autonomy === "ask" ? "Asks you before anything outside its own sandbox." : a.autonomy === "act" ? "Works inside its sandbox freely, asks before risky actions." : "Never asks inside its sandbox. Connected apps still follow their own rules."}
           </div>
@@ -302,7 +308,7 @@ export function ProfileScreen({ id }: { id: string }) {
                       </option>
                     ))}
                   </select>
-                  <input className="input sm" list="model-list" value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="Default model" disabled={!isBuilder} aria-label="Model" />
+                  <input className="input sm" list="model-list" value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="Default model" disabled={!canSet} aria-label="Model" />
                   <datalist id="model-list">
                     {models.map((m) => (
                       <option key={m.value} value={m.value}>{m.label}</option>
@@ -325,16 +331,17 @@ export function ProfileScreen({ id }: { id: string }) {
                   ["docker", "Docker"],
                   ["local", "Local"],
                 ]}
-                onChange={(v) => isBuilder && setDraft({ ...draft, sandbox: v })}
+                onChange={(v) => canSet && setDraft({ ...draft, sandbox: v })}
               />
             </div>
+            {locked && <div className="it small muted">The model and the sandbox are set by the repository. Changes here are refused.</div>}
             {engineDirty && (
               <div className="it" style={{ justifyContent: "flex-end", gap: 8 }}>
                 <span className="small muted grow">Saving restarts {a.name}. Memory is kept.</span>
                 <button className="btn sm ghost" onClick={() => setDraft({ ...draft, engine: a.engine, model: a.model, sandbox: a.sandbox })}>
                   Undo
                 </button>
-                <button className="btn primary sm" onClick={() => patch({ engine: draft.engine, model: draft.model, sandbox: draft.sandbox }, "Saved. It restarts on the next message.")}>
+                <button className="btn primary sm" onClick={() => patch(locked ? { engine: draft.engine } : { engine: draft.engine, model: draft.model, sandbox: draft.sandbox }, "Saved. It restarts on the next message.")}>
                   Save
                 </button>
               </div>
@@ -370,7 +377,8 @@ export function ProfileScreen({ id }: { id: string }) {
                 <div className="small muted">monthly budget</div>
               </div>
             </div>
-            {isBuilder && (
+            {locked && <div className="it small muted">The monthly budget is set by the repository.</div>}
+            {canSet && (
               <div className="it">
                 Monthly budget
                 <span className="right" style={{ gap: 8 }}>

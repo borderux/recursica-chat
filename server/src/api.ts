@@ -14,6 +14,7 @@ import { neverByName } from "./toolpolicy.ts";
 import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } from "./google.ts";
 import { handleTaken, registerProfile } from "./profile.ts";
 import { registerFiles } from "./files.ts";
+import { managedRefusal, managedSince } from "./managed.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -259,7 +260,7 @@ export function buildApi(app: App): Hono<Env> {
   });
 
   // ---------------------------------------------------------------- agents
-  const agentOut = (a: any) => ({ ...a, status: app.runtime.statusOf(a.id), monthCostMicros: svc.monthCostMicros(a.id) });
+  const agentOut = (a: any) => ({ ...a, status: app.runtime.statusOf(a.id), monthCostMicros: svc.monthCostMicros(a.id), managed: managedSince(db, a.id) !== null });
   api.get("/api/agents", (c) => c.json({ agents: svc.agents().map(agentOut) }));
   api.get("/api/agents/:id", (c) => {
     const a = svc.agent(c.req.param("id"));
@@ -356,7 +357,11 @@ export function buildApi(app: App): Hono<Env> {
     requireRole(c.get("user"), "builder");
     const a = svc.agent(c.req.param("id"));
     if (!a) throw new HttpError(404, "no such agent");
-    const f = validAgentFields(await c.req.json(), true);
+    const body = await c.req.json();
+    // a managed agent's settings come from its repository, for every role (managed.ts)
+    const refused = managedRefusal(db, a.id, body);
+    if (refused) throw new HttpError(403, refused);
+    const f = validAgentFields(body, true);
     if (f.handle && f.handle !== a.handle && (svc.agent(f.handle) || handleTaken(db, f.handle))) throw bad(`@${f.handle} is taken`);
     const keys = Object.keys(f);
     if (keys.length) db.prepare(`UPDATE agents SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(...keys.map((k) => f[k]), a.id);
