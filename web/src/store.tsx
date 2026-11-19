@@ -176,6 +176,7 @@ export function StoreProvider(props: { me: User; workspace: string; version: str
   const chatReload = useRef<number | undefined>(undefined);
   useBus((e) => {
     if (e.type === "agent_status") setAgents((list) => list.map((a) => (a.id === e.agentId ? { ...a, status: e.status } : a)));
+    if (e.type === "person") reloadUsers().catch(() => {});
     if (e.type === "approval") {
       setPending((list) => {
         const rest = list.filter((x) => x.id !== e.approval.id);

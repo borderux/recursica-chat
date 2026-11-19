@@ -15,6 +15,7 @@ import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } f
 import { handleTaken, registerProfile } from "./profile.ts";
 import { registerFiles } from "./files.ts";
 import { managedRefusal, managedSince } from "./managed.ts";
+import { DEACTIVATED, deactivatedIds, isDeactivated, registerDeactivation } from "./deactivate.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
@@ -99,10 +100,14 @@ export function buildApi(app: App): Hono<Env> {
     if (!t) return undefined;
     const s = db.prepare("SELECT user_id, expires_at FROM sessions WHERE token = ?").get(t) as any;
     if (!s || s.expires_at < now()) return undefined;
+    // a deactivated person's sessions end at once; one that somehow remains lets them in nowhere
+    if (isDeactivated(db, s.user_id)) return undefined;
     return userById(s.user_id);
   };
   const isHttps = (c: Context) => requestIsHttps(c.req.url, (n) => c.req.header(n), !!app.cfg.trustProxy);
   const login = (c: Context, uid: string) => {
+    // every way in comes through here: a password, Google, the hosted one-time link, setup
+    if (isDeactivated(db, uid)) throw new HttpError(403, DEACTIVATED);
     const t = token();
     db.prepare("INSERT INTO sessions(token, user_id, expires_at) VALUES(?,?,?)").run(t, uid, now() + 30 * 86400_000);
     setCookie(c, "cc_session", t, { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 30 * 86400, secure: isHttps(c) });
@@ -160,6 +165,7 @@ export function buildApi(app: App): Hono<Env> {
       console.warn(`[sso] refused: ${r.error}`);
       return c.redirect("/?signin=expired", 302);
     }
+    if (isDeactivated(db, r.userId)) return c.redirect("/?signin=deactivated", 302);
     login(c, r.userId);
     return c.redirect("/", 302);
   });
@@ -227,7 +233,12 @@ export function buildApi(app: App): Hono<Env> {
   });
 
   // ---------------------------------------------------------------- people
-  api.get("/api/users", (c) => c.json({ users: db.prepare("SELECT id, email, name, role, created_at AS createdAt FROM users ORDER BY created_at").all() }));
+  api.get("/api/users", (c) => {
+    const off = deactivatedIds(db);
+    const users = db.prepare("SELECT id, email, name, role, created_at AS createdAt FROM users ORDER BY created_at").all() as any[];
+    return c.json({ users: users.map((u) => ({ ...u, deactivated: off.has(u.id) })) });
+  });
+  registerDeactivation(api, db, app.bus, (u) => requireRole(u, "admin"), (status, msg) => new HttpError(status, msg));
   api.post("/api/users", async (c) => {
     requireRole(c.get("user"), "admin");
     const b = await c.req.json();

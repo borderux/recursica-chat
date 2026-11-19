@@ -10,6 +10,7 @@ const GOOGLE_REFUSED: Record<string, string> = {
   domain: "That Google account isn't in this workspace's domain.",
   "email-not-verified": "That Google account's email address isn't verified.",
   cancelled: "Sign-in with Google was cancelled.",
+  deactivated: "This account is deactivated. Ask an admin to reactivate it.",
 };
 
 export function AuthScreen({ setup, workspace, hosted, google, passwordSignIn = "all", onDone }: { setup: boolean; workspace: string; hosted?: { signInUrl: string } | null; google?: boolean; passwordSignIn?: "all" | "members" | "off"; onDone: () => void }) {

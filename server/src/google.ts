@@ -30,6 +30,7 @@ import type { Context, Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { allowedOrigins } from "./origin.ts";
 import { refreshPhoto, type Db } from "./profile.ts";
+import { isDeactivated } from "./deactivate.ts";
 
 export type PasswordSignIn = "all" | "members" | "off";
 
@@ -224,6 +225,7 @@ export function registerGoogleSignIn(api: Hono<any>, deps: GoogleDeps): void {
     const email = String(claims.email).toLowerCase();
     const u = deps.db.prepare("SELECT id, role FROM users WHERE email = ?").get(email) as any;
     if (!u || !(u.role === "owner" || u.role === "admin" || inDomain(email, cfg.domain))) return fail(c, "no-account");
+    if (isDeactivated(deps.db as any, u.id)) return fail(c, "deactivated");
     deleteCookie(c, FLOW_COOKIE, { path: "/auth/google" });
     deps.login(c, u.id);
     // a copy of their Google photo (profile.ts): bounded in time, and it never stops the sign-in

@@ -45,6 +45,14 @@ You are now the owner. The owner can do everything, including exporting and dele
 
 To add a person, go to **People and agents** and select **Add a person**. CircleChat shows a temporary password to send them. There is no email invite.
 
+A person is never deleted, so their messages keep their author. To take away someone's access, an admin selects **Deactivate** beside the person (`server/src/deactivate.ts`):
+
+- Every session of the person ends at once, and their open app disconnects.
+- No way in works while the person is deactivated: a password, Google, or a session from the server's CLI.
+- Their messages, tasks and memories stay, attributed to them. The people list shows them as deactivated.
+- **Reactivate** lets them sign in again.
+- Nobody can deactivate the owner, and an admin can't deactivate themselves.
+
 ## Add a model provider
 
 Agents need a model. Go to **Settings, Models and keys**, then **Add a provider**.
