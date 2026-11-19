@@ -47,6 +47,8 @@ export interface User {
   name: string;
   role: Role;
   createdAt?: number;
+  /** turned off by an admin: no sign-in, messages kept (server/src/deactivate.ts) */
+  deactivated?: boolean;
 }
 export type AgentState = "stopped" | "starting" | "idle" | "working" | "waiting_approval" | "crashed" | "sleeping" | "budget";
 export interface AgentStatus {
@@ -175,4 +177,5 @@ export type BusEvent =
   | { type: "task"; chatId: string; task: Task }
   | { type: "memory"; memory: Memory }
   | { type: "chat"; chat: Chat }
-  | { type: "delivery"; delivery: Delivery };
+  | { type: "delivery"; delivery: Delivery }
+  | { type: "person"; userId: string; deactivated: boolean };

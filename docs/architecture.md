@@ -73,6 +73,7 @@ flowchart LR
 | Slack bridge | `server/src/bridges/slack.ts` | Mirrors a Slack channel and a chat over Socket Mode. |
 | Importer | `server/src/importer.ts` | Reads OpenClaw workspaces and Hermes homes. |
 | Hosting | `server/src/hosting.ts` | Proxy trust, the seed file, export, erase, the Docker bridge address, hosted sign-in. |
+| People | `server/src/deactivate.ts` | Deactivating and reactivating a person: no sign-in by any way, sessions ended at once, messages kept. |
 | Files | `server/src/files.ts` | `attach_files`, the server's copy of each attached file, the download route. |
 | CLI | `server/src/cli.ts` | `export`, `backup`, `state`, `set-password-hash`, and the root-only `session` and `end-sessions` (`clisession.ts`), `set-provider` and `provider-key-hash` (`cliprovider.ts`), `manage`, `unmanage`, `agent-get`, `agent-set` and `agent-models` (`managed.ts`). |
 | Crypto | `server/src/crypto.ts` | scrypt passwords, the AES-256-GCM vault, ids, HMAC. |

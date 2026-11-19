@@ -204,6 +204,22 @@ test("an admin signs in, with PKCE checked and the secret from its file", async 
   assert.equal(x.redirectUri, `${PUBLIC}/auth/google/callback`);
 });
 
+test("a deactivated person is refused, with no session, and signs in again once reactivated", async () => {
+  const id = (await owner.get("/api/users")).json.users.find((u: any) => u.email === "person-a@example.com").id;
+  assert.equal((await owner.post(`/api/users/${id}/deactivate`, {})).status, 200);
+  try {
+    const r = await signIn();
+    assert.equal(r.status, 302);
+    assert.equal(r.location, "/?signin=google-deactivated");
+    assert.equal(r.session, undefined, "no session cookie");
+  } finally {
+    assert.equal((await owner.post(`/api/users/${id}/reactivate`, {})).status, 200);
+  }
+  const again = await signIn();
+  assert.equal(again.location, "/");
+  assert.equal((await me(again.session)).user.email, "person-a@example.com");
+});
+
 test("the owner signs in by the same email", async () => {
   const r = await signIn({ email: ownerEmail.toUpperCase() });
   assert.equal((await me(r.session)).user.role, "owner", "the email matches whatever its case");

@@ -8,6 +8,7 @@ import type { App } from "./app.ts";
 import { buildApi, staticHandler } from "./api.ts";
 import { REPO_ROOT } from "./agents/engines.ts";
 import { allowedOrigins, originProblem } from "./origin.ts";
+import { isDeactivated } from "./deactivate.ts";
 
 function readBody(req: IncomingMessage, limit = 2_000_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -116,7 +117,7 @@ export function createHttpServer(app: App): HttpServer {
     const cookie = req.headers.cookie ?? "";
     const tok = /(?:^|;\s*)cc_session=([^;]+)/.exec(cookie)?.[1] ?? new URL(req.url, "http://x").searchParams.get("token") ?? "";
     const s = app.db.prepare("SELECT user_id, expires_at FROM sessions WHERE token = ?").get(tok) as any;
-    if (!s || s.expires_at < Date.now()) return socket.destroy();
+    if (!s || s.expires_at < Date.now() || isDeactivated(app.db, s.user_id)) return socket.destroy();
     wss.handleUpgrade(req, socket, head, (ws) => attach(ws, s.user_id));
   });
 
@@ -127,6 +128,8 @@ export function createHttpServer(app: App): HttpServer {
     };
     const off = app.bus.onEvent((e) => {
       if (ws.readyState !== WebSocket.OPEN) return;
+      // a deactivated person's live connections close at once (deactivate.ts)
+      if (e.type === "person" && e.userId === uid && e.deactivated) return ws.close(4003, "deactivated");
       if ("chatId" in e && e.chatId && !visible(e.chatId)) return;
       if (e.type === "chat" && !visible((e.chat as any).id)) return;
       ws.send(JSON.stringify(e));

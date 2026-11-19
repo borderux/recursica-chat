@@ -16,6 +16,7 @@ import { statSync } from "node:fs";
 import type { DB } from "./db.ts";
 import { now } from "./db.ts";
 import { token } from "./crypto.ts";
+import { isDeactivated } from "./deactivate.ts";
 
 export const SESSION_MAX_MINUTES = 60;
 const REFUSED_ROLES = new Set(["owner", "admin"]);
@@ -67,6 +68,7 @@ function account(db: DB, email: string): { id: string; role: string } {
 export function memberSession(db: DB, email: string, minutes = SESSION_MAX_MINUTES): { token: string; expiresAt: number } {
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > SESSION_MAX_MINUTES) throw new Error(`minutes must be 1 to ${SESSION_MAX_MINUTES}`);
   const u = account(db, email);
+  if (isDeactivated(db, u.id)) throw new Error(`${email} is deactivated: no session`);
   const t = token();
   const expiresAt = now() + minutes * 60_000;
   db.prepare("INSERT INTO sessions(token, user_id, expires_at) VALUES(?,?,?)").run(t, u.id, expiresAt);

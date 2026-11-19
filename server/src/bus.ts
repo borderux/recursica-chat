@@ -12,7 +12,8 @@ export type BusEvent =
   | { type: "task"; chatId: string; task: unknown }
   | { type: "memory"; memory: unknown }
   | { type: "chat"; chat: unknown }
-  | { type: "delivery"; delivery: unknown };
+  | { type: "delivery"; delivery: unknown }
+  | { type: "person"; userId: string; deactivated: boolean };
 
 export type AgentState = "stopped" | "starting" | "idle" | "working" | "waiting_approval" | "crashed" | "sleeping" | "budget";
 export interface AgentStatus {

@@ -16,6 +16,15 @@ const ROLE_HINT: Record<Role, string> = {
 export function PeopleScreen() {
   const { agents, users, me, go, isAdmin, isBuilder, fail, reloadUsers, toast, who } = useStore();
   const [adding, setAdding] = useState(false);
+  const setActive = async (id: string, on: boolean) => {
+    try {
+      await api.post(`/api/users/${id}/${on ? "reactivate" : "deactivate"}`, {});
+      await reloadUsers();
+      toast(on ? "Reactivated" : "Deactivated. Their sessions ended.");
+    } catch (e) {
+      fail(e);
+    }
+  };
   const setRole = async (id: string, role: Role) => {
     try {
       await api.patch(`/api/users/${id}`, { role });
@@ -75,8 +84,15 @@ export function PeopleScreen() {
                   <div className="small muted">
                     {u.email}
                     {u.id === me.id ? " · you" : ""}
+                    {u.deactivated ? " · deactivated: can't sign in" : ""}
                   </div>
                 </div>
+                {u.deactivated && <span className="status waiting">Deactivated</span>}
+                {isAdmin && u.role !== "owner" && u.id !== me.id && (
+                  <button className="btn sm soft" onClick={() => setActive(u.id, !!u.deactivated)} aria-label={`${u.deactivated ? "Reactivate" : "Deactivate"} ${who(u.id)}`}>
+                    {u.deactivated ? "Reactivate" : "Deactivate"}
+                  </button>
+                )}
                 {isAdmin && u.role !== "owner" && u.id !== me.id ? (
                   <select className="input sm" style={{ width: 150 }} value={u.role} onChange={(e) => setRole(u.id, e.target.value as Role)} aria-label={`Role for ${who(u.id)}`}>
                     {(["admin", "builder", "member"] as Role[]).map((r) => (
