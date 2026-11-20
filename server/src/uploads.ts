@@ -20,6 +20,8 @@
 //   to ask for a text version. No OCR.
 // - Agents read the text with the read_file tool, in chunks; a message with files tells them which
 //   are attached. A service reads it at GET /api/service/files/:id/text (drivenagents.ts).
+// - A message's files are stored before any agent or service hears of the message, so the request a
+//   service gets on its socket lists them, with a .txt's or .md's text ready and a PDF's pending.
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -240,6 +242,22 @@ export class Uploads {
     ensureSpace(db, total);
     const blobs = files.map((f) => ({ ...f, ...storeBlob(this.deps.dataDir, f.data) }));
     const stored: StoredFile[] = blobs.map((b) => ({ id: b.id, name: b.name, size: b.data.length }));
+    const ins = db.prepare(
+      "INSERT INTO files(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at, user_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    );
+    const text = db.prepare("INSERT INTO file_texts(file_id, state, reason, pages, pages_read, text, updated_at) VALUES(?,?,?,?,?,?,?)");
+    // the files' rows and their text: for a message, before any agent or service hears of it
+    const rows = (messageId: string | null) =>
+      blobs.forEach((b, k) => {
+        ins.run(b.id, a.chatId, messageId, a.taskId ?? "", "", b.name, b.data.length, b.sha256, now(), a.userId);
+        if (kinds[k] === "pdf") text.run(b.id, "pending", "", null, null, "", now());
+        else {
+          let t = b.data.toString("utf8");
+          const cut = Buffer.byteLength(t) > UPLOAD.textBytes;
+          if (cut) t = b.data.subarray(0, UPLOAD.textBytes).toString("utf8").replace(/�$/, "");
+          text.run(b.id, "ok", cut ? `its first ${UPLOAD.textBytes / 1024 / 1024} MB of text` : "", null, null, t, now());
+        }
+      });
     let message: any;
     if (!a.taskId) {
       const body = String(a.body ?? "").slice(0, 20000);
@@ -250,22 +268,9 @@ export class Uploads {
         body,
         meta: { files: stored.map((s, k) => ({ ...s, userId: a.userId, text: kinds[k] === "pdf" ? "pending" : "ok" })) },
         agentText: (body ? body + "\n\n" : "") + attachedLines(stored, kinds),
+        stored: (m) => rows(m.id),
       });
-    }
-    const ins = db.prepare(
-      "INSERT INTO files(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at, user_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-    );
-    const text = db.prepare("INSERT INTO file_texts(file_id, state, reason, pages, pages_read, text, updated_at) VALUES(?,?,?,?,?,?,?)");
-    blobs.forEach((b, k) => {
-      ins.run(b.id, a.chatId, message?.id ?? null, a.taskId ?? "", "", b.name, b.data.length, b.sha256, now(), a.userId);
-      if (kinds[k] === "pdf") text.run(b.id, "pending", "", null, null, "", now());
-      else {
-        let t = b.data.toString("utf8");
-        const cut = Buffer.byteLength(t) > UPLOAD.textBytes;
-        if (cut) t = b.data.subarray(0, UPLOAD.textBytes).toString("utf8").replace(/�$/, "");
-        text.run(b.id, "ok", cut ? `its first ${UPLOAD.textBytes / 1024 / 1024} MB of text` : "", null, null, t, now());
-      }
-    });
+    } else rows(null);
     if (a.taskId) svc.updateTask(a.taskId, {});
     blobs.forEach((b, k) => kinds[k] === "pdf" && this.#enqueue(b.id));
     return { stored, message };
