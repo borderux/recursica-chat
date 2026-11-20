@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE TABLE IF NOT EXISTS chats (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('group','dm','agents')), name TEXT NOT NULL,
-  created_by TEXT, created_at INTEGER NOT NULL
+  created_by TEXT, created_at INTEGER NOT NULL, archived_at INTEGER, archived_by TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS chat_members (
   chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -80,8 +80,9 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE, title TEXT NOT NULL,
   assignee_type TEXT NOT NULL DEFAULT '', assignee_id TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','working','needs_you','checking','done')),
-  plan_id TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','working','needs_you','checking','done','cancelled')),
+  plan_id TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  archived_at INTEGER, archived_by TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS secrets (
@@ -139,7 +140,38 @@ export function openDb(path: string): DB {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   db.exec(SCHEMA);
+  migrateArchive(db);
   return db;
+}
+
+/**
+ * Archive and the cancelled status (archive.ts), for a database from before them: chats get their
+ * archive columns; tasks are rebuilt once, with every row kept, since SQLite can't change a CHECK.
+ */
+function migrateArchive(db: DB): void {
+  const cols = (t: string) => (db.prepare(`SELECT name FROM pragma_table_info('${t}')`).all() as any[]).map((c) => c.name);
+  if (!cols("chats").includes("archived_at")) db.exec("ALTER TABLE chats ADD COLUMN archived_at INTEGER; ALTER TABLE chats ADD COLUMN archived_by TEXT NOT NULL DEFAULT '';");
+  const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get() as any)?.sql ?? "";
+  if (sql.includes("'cancelled'")) return;
+  const fk = (db.prepare("PRAGMA foreign_keys").get() as any)?.foreign_keys;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec(`BEGIN;
+CREATE TABLE tasks_new (
+  id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE, title TEXT NOT NULL,
+  assignee_type TEXT NOT NULL DEFAULT '', assignee_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','working','needs_you','checking','done','cancelled')),
+  plan_id TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  archived_at INTEGER, archived_by TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO tasks_new(id, chat_id, title, assignee_type, assignee_id, status, plan_id, created_by, created_at, updated_at)
+  SELECT id, chat_id, title, assignee_type, assignee_id, status, plan_id, created_by, created_at, updated_at FROM tasks;
+DROP TABLE tasks;
+ALTER TABLE tasks_new RENAME TO tasks;
+COMMIT;`);
+  } finally {
+    if (fk) db.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 export function now(): number {

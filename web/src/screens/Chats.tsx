@@ -26,7 +26,7 @@ import {
 } from "../ui/ui.tsx";
 
 // ================================================================ list column
-type ChatFilter = "all" | "groups" | "agents" | "people";
+type ChatFilter = "all" | "groups" | "agents" | "people" | "archived";
 
 export function chatTitle(c: Chat, agent: (id: string) => Agent | undefined): string {
   if (c.kind === "dm") {
@@ -61,7 +61,16 @@ export function ChatList({ active }: { active?: string }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState<"" | "group" | "dm">("");
-  const shown = chats.filter((c) => {
+  // archived chats leave the list; the Archived filter shows them
+  const [archived, setArchived] = useState<Chat[]>([]);
+  useEffect(() => {
+    if (filter === "archived")
+      api
+        .get("/api/archived")
+        .then((r) => setArchived(r.chats))
+        .catch(() => setArchived([]));
+  }, [filter, chats]);
+  const shown = (filter === "archived" ? archived : chats).filter((c) => {
     const hasAgent = c.members.some((m) => m.type === "agent");
     if (filter === "groups") return c.kind === "group";
     if (filter === "agents") return c.kind === "dm" || c.kind === "agents";
@@ -112,12 +121,13 @@ export function ChatList({ active }: { active?: string }) {
           ["groups", "Groups"],
           ["agents", "Agents"],
           ["people", "People"],
+          ["archived", "Archived"],
         ]}
       />
       <div className="scroll">
         {shown.length === 0 && (
           <div className="small muted" style={{ padding: "20px 24px" }}>
-            {chats.length === 0 ? "No chats yet. Start one with the + button." : "Nothing here."}
+            {filter === "archived" ? "No archived chats." : chats.length === 0 ? "No chats yet. Start one with the + button." : "Nothing here."}
           </div>
         )}
         {shown.map((c) => (
@@ -386,22 +396,26 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
             );
           })}
         </div>
-        <Composer
-          chat={chat}
-          agents={agentsHere}
-          onOpenInfo={() => go(`/chats/${chatId}?info=1`)}
-          placeholder={
-            chat.kind === "agents"
-              ? "Step in and reply…"
-              : dmAgent
-                ? `Message ${dmAgent.name}…`
-                : agentsHere.length === 1
-                  ? `Message ${agentsHere[0].name}…`
-                  : agentsHere.length > 1
-                    ? "Message the group. @name asks one agent, @all asks everyone…"
-                    : `Message ${title}…`
-          }
-        />
+        {chat.archivedAt ? (
+          <ArchivedBar chat={chat} />
+        ) : (
+          <Composer
+            chat={chat}
+            agents={agentsHere}
+            onOpenInfo={() => go(`/chats/${chatId}?info=1`)}
+            placeholder={
+              chat.kind === "agents"
+                ? "Step in and reply…"
+                : dmAgent
+                  ? `Message ${dmAgent.name}…`
+                  : agentsHere.length === 1
+                    ? `Message ${agentsHere[0].name}…`
+                    : agentsHere.length > 1
+                      ? "Message the group. @name asks one agent, @all asks everyone…"
+                      : `Message ${title}…`
+            }
+          />
+        )}
       </div>
       {info && <GroupInfo chat={chat} onClose={() => go(`/chats/${chatId}`)} />}
     </>
@@ -553,7 +567,7 @@ function CentredNote({ m }: { m: Message }) {
 
 // ---------------------------------------------------------------- cards
 export function TaskBox({ t, onToggle }: { t: Pick<Task, "status">; onToggle?: () => void }) {
-  const cls = t.status === "done" ? "box ok" : t.status === "working" || t.status === "checking" ? "box run" : t.status === "needs_you" ? "box ask" : "box";
+  const cls = t.status === "done" ? "box ok" : t.status === "working" || t.status === "checking" ? "box run" : t.status === "needs_you" ? "box ask" : t.status === "cancelled" ? "box cancelled" : "box";
   return (
     <span
       className={cls + (onToggle ? " click" : "")}
@@ -565,6 +579,7 @@ export function TaskBox({ t, onToggle }: { t: Pick<Task, "status">; onToggle?: (
       }}
     >
       {t.status === "done" && <Icon n="check" />}
+      {t.status === "cancelled" && <Icon n="x" />}
     </span>
   );
 }
@@ -574,6 +589,9 @@ function PlanCard({ m }: { m: Message }) {
   const steps: Task[] = m.meta.steps ?? [];
   const done = steps.filter((s) => s.status === "done").length;
   const toggle = (t: Task) => api.patch(`/api/tasks/${t.id}`, { status: t.status === "done" ? "todo" : "done" }).catch(fail);
+  const planId: string = m.meta.planId ?? "";
+  const archived = steps.length > 0 && steps.every((s) => s.archivedAt);
+  const archive = (restore: boolean) => api.post(`/api/plans/${planId}/${restore ? "restore" : "archive"}`, {}).catch(fail);
   return (
     <div className="card">
       <div className="card-h">
@@ -587,7 +605,7 @@ function PlanCard({ m }: { m: Message }) {
           {steps.map((t) => (
             <li key={t.id}>
               <TaskBox t={t} onToggle={() => toggle(t)} />
-              <span className={t.status === "done" ? "done-t" : ""}>{t.title}</span>
+              <span className={t.status === "done" || t.status === "cancelled" ? "done-t" : ""}>{t.title}</span>
               <span className="who">
                 {t.status === "needs_you" && <Icon n="lock" size="sm" className="muted" />}
                 {t.assigneeType === "agent" && <WorkingMark a={agent(t.assigneeId)} chatId={m.chatId} done={t.status === "done"} />}
@@ -603,6 +621,12 @@ function PlanCard({ m }: { m: Message }) {
           Open tasks
           <Icon n="right" size="sm" />
         </button>
+        {planId && (
+          <button className="btn sm ghost" onClick={() => archive(archived)} title={archived ? "Bring the plan's tasks back to the lists" : "Put the plan's tasks away: they stay, under Archived"}>
+            <Icon n={archived ? "refresh" : "box"} size="sm" />
+            {archived ? "Restore plan" : "Archive plan"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -970,7 +994,16 @@ function GroupInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
       fail(e);
     }
   };
-  const open = tasks.filter((t) => t.status !== "done").length;
+  const open = tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length;
+  const archiveChat = async (c: Chat, restore: boolean) => {
+    try {
+      await api.post(`/api/chats/${c.id}/${restore ? "restore" : "archive"}`, {});
+      toast(restore ? "Restored" : "Archived. It's under Archived in the chat list.");
+      if (!restore) onClose();
+    } catch (e) {
+      fail(e);
+    }
+  };
   return (
     <div className="drawer-p pane" style={{ background: "var(--surface)", gap: 0, padding: 0, overflowY: "auto" }}>
       <div style={{ display: "flex", justifyContent: "flex-end", padding: "10px 10px 0" }}>
@@ -1086,6 +1119,15 @@ function GroupInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
               <Icon n="right" size="sm" />
             </span>
           </div>
+          {chat.kind !== "dm" && (
+            <div className="it" style={{ cursor: "pointer" }} onClick={() => archiveChat(chat, !!chat.archivedAt)}>
+              <span className="ic">
+                <Icon n={chat.archivedAt ? "refresh" : "box"} />
+              </span>
+              {chat.archivedAt ? "Restore this chat" : "Archive this chat"}
+              <span className="right small muted">{chat.archivedAt ? "back in the lists" : "kept, under Archived"}</span>
+            </div>
+          )}
         </div>
       </div>
       {adding && (
@@ -1103,6 +1145,29 @@ function GroupInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** In place of the composer: an archived chat is read-only until someone restores it. */
+function ArchivedBar({ chat }: { chat: Chat }) {
+  const { fail, toast } = useStore();
+  return (
+    <div className="composer" style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px" }}>
+      <Icon n="box" />
+      <span className="grow muted">This chat is archived. It stays as it was; restore it to write in it.</span>
+      <button
+        className="btn sm"
+        onClick={() =>
+          api
+            .post(`/api/chats/${chat.id}/restore`, {})
+            .then(() => toast("Restored"))
+            .catch(fail)
+        }
+      >
+        <Icon n="refresh" size="sm" />
+        Restore
+      </button>
     </div>
   );
 }

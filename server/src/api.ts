@@ -23,6 +23,7 @@ import { slug } from "./gateway.ts";
 import { MENTION_ALL } from "./services.ts";
 import { statusSeenBy } from "./eventfilter.ts";
 import { APP_CATALOG, preset, presetConfig, checkPreset } from "./apps.ts";
+import { registerArchive, TASK_STATUSES } from "./archive.ts";
 import { requestIsHttps, exportWorkspace, eraseWorkspace, hosting, useSsoToken, hostingFetch } from "./hosting.ts";
 
 type Role = "owner" | "admin" | "builder" | "member";
@@ -122,7 +123,8 @@ export function buildApi(app: App): Hono<Env> {
     if (RANK[u.role] < RANK[role]) throw new HttpError(403, `Only ${role}s and above can do that`);
   };  // What a person may see: chats they're in, plus the visible agents-only chats. Admins see everything.
   const isAdmin = (u: User) => RANK[u.role] >= RANK.admin;
-  const chatIdsFor = (u: User): Set<string> => new Set(svc.chatsForUser(u.id).map((x: any) => x.id));
+  // archived chats too: a member still opens one, and its files, from the Archived list
+  const chatIdsFor = (u: User): Set<string> => new Set(svc.chatsForUser(u.id, "all").map((x: any) => x.id));
   const seesChat = (u: User, cid: string, ids?: Set<string>) => isAdmin(u) || (!!cid && (ids ?? chatIdsFor(u)).has(cid));
 
 
@@ -222,6 +224,7 @@ export function buildApi(app: App): Hono<Env> {
   api.get("/api/me", (c) => c.json({ user: c.get("user") }));
   registerProfile(api, db);
   registerFiles(api, db, app.cfg.dataDir, seesChat);
+  registerArchive(api, app, isAdmin);
   api.patch("/api/me", async (c) => {
     const u = c.get("user");
     const b = await c.req.json();
@@ -550,6 +553,7 @@ export function buildApi(app: App): Hono<Env> {
   api.post("/api/chats/:id/messages", async (c) => {
     const u = c.get("user");
     const chat = canSee(u, c.req.param("id"));
+    if (chat.archivedAt) throw new HttpError(409, "This chat is archived. Restore it to write in it.");
     if (chat.kind === "agents" && !svc.isMember(chat.id, "user", u.id)) svc.addMember(chat.id, "user", u.id); // stepping in
     const b = await c.req.json();
     const body = String(need(b.body, "message")).slice(0, 20000);
@@ -670,7 +674,7 @@ export function buildApi(app: App): Hono<Env> {
   });
   api.patch("/api/tasks/:id", async (c) => {
     const b = await c.req.json();
-    if (b.status && !["todo", "working", "needs_you", "checking", "done"].includes(b.status)) throw bad("bad status");
+    if (b.status && !TASK_STATUSES.includes(b.status)) throw bad("bad status");
     const t = svc.task(c.req.param("id"));
     if (!t || !seesChat(c.get("user"), t.chatId)) throw new HttpError(404, "no such task");
     try {
