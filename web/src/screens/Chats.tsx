@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Chat list, conversation, composer with @mentions, group info drawer, new chat.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as RKE, type ReactNode } from "react";
-import { FileChips } from "../ui/files.tsx";
+import { FileChips, UPLOAD_ACCEPT } from "../ui/files.tsx";
 import { api, type Agent, type Approval, type Chat, type Member, type Message, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
@@ -724,6 +724,9 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
   const { fail, me, user, profiles } = useStore();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  // files to send with the message: PDF, .txt and .md (server/src/uploads.ts)
+  const [files, setFiles] = useState<File[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
   const [mention, setMention] = useState<{ q: string; start: number } | null>(null);
   const [sel, setSel] = useState(0);
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -786,11 +789,13 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
   };
   const send = async () => {
     const body = text.trim();
-    if (!body || sending) return;
+    if ((!body && !files.length) || sending) return;
     setSending(true);
     try {
-      await api.post(`/api/chats/${chat.id}/messages`, { body });
+      if (files.length) await api.upload(`/api/chats/${chat.id}/files`, files, body);
+      else await api.post(`/api/chats/${chat.id}/messages`, { body });
       setText("");
+      setFiles([]);
       setMention(null);
     } catch (e) {
       fail(e);
@@ -920,6 +925,30 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
         </div>
       )}
       <div className="composer">
+        {files.length > 0 && (
+          <div className="file-chips" style={{ marginBottom: 6 }}>
+            {files.map((f, k) => (
+              <span key={k} className="file-chip">
+                <span className="file-name">{f.name}</span>
+                <button className="btn icon ghost sm" aria-label={`Remove ${f.name}`} onClick={() => setFiles((l) => l.filter((_, j) => j !== k))}>
+                  <Icon n="x" size="sm" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          accept={UPLOAD_ACCEPT}
+          hidden
+          onChange={(e) => {
+            const picked = Array.from(e.target.files ?? []);
+            setFiles((l) => [...l, ...picked].slice(0, 10));
+            e.target.value = "";
+          }}
+        />
         <div className="field" style={mention ? { background: "var(--surface)", boxShadow: "inset 0 0 0 1.5px var(--accent)" } : undefined}>
           <textarea
             ref={ta}
@@ -949,7 +978,10 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
           >
             <Icon n="at" />
           </button>
-          <button className="round send" aria-label="Send" onClick={send} disabled={sending || !text.trim()}>
+          <button className="round" aria-label="Attach files" title="Attach a PDF, .txt or .md file" onClick={() => picker.current?.click()}>
+            <Icon n="file" />
+          </button>
+          <button className="round send" aria-label="Send" onClick={send} disabled={sending || (!text.trim() && !files.length)}>
             <Icon n="send" />
           </button>
         </div>

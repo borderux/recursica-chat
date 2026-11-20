@@ -258,6 +258,8 @@ export class Services {
     meta?: Record<string, any>;
     hop?: number;
     goalId?: string;
+    /** What the agents it goes to get, when it isn't the body: the body and its attached files (uploads.ts). */
+    agentText?: string;
   }): Message {
     const msg = this.insertMessage({
       chatId: input.chatId,
@@ -300,7 +302,7 @@ export class Services {
         chatId: input.chatId,
         fromType: input.authorType,
         fromId: input.authorId,
-        text: input.body,
+        text: input.agentText ?? input.body,
         hop,
         goalId: goalId || msg.id,
         sourceMessageId: msg.id,

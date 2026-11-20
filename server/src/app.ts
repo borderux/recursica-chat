@@ -11,6 +11,7 @@ import { Gateway } from "./gateway.ts";
 import { AgentRuntime } from "./agents/runtime.ts";
 import { ENGINES, agentDirs, dockerfileFor, REPO_ROOT, type ModelProvider } from "./agents/engines.ts";
 import { attachFilesTool } from "./files.ts";
+import { readFileTool, Uploads } from "./uploads.ts";
 import { Triggers } from "./triggers.ts";
 import { SlackBridge } from "./bridges/slack.ts";
 import { DrivenAgents } from "./drivenagents.ts";
@@ -47,6 +48,7 @@ export class App {
   runtime: AgentRuntime;
   triggers: Triggers;
   driven: DrivenAgents;
+  uploads: Uploads;
   bridges = new Map<string, SlackBridge>();
   engineJobs = new Map<string, { state: "running" | "done" | "error"; log: string }>();
 
@@ -69,9 +71,12 @@ export class App {
     this.runtime.approvalTtlMs = cfg.approvalTtlMs;
     this.triggers = new Triggers(this.db, this.svc);
     this.driven = new DrivenAgents(this); // agents a service drives (drivenagents.ts)
+    this.uploads = new Uploads({ db: this.db, svc: this.svc, dataDir: cfg.dataDir }); // people's files (uploads.ts)
+    this.gateway.addCoreTool(readFileTool(this.uploads));
   }
 
   start(): void {
+    this.uploads.resume(); // PDFs a stop left unread
     // leftovers from a crash go first, then queued work and the warm-up start fresh containers
     const swept = this.cfg.warmOnBoot ? this.runtime.sweepContainers().catch(() => 0) : Promise.resolve(0);
     void swept.then((n) => {

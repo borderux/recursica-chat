@@ -16,6 +16,8 @@
 //   files of a plan onto a task (zipTaskFiles), and deletes such files of its agents, never anyone
 //   else's (deleteTaskFile).
 // - The service archives and restores the tasks of the agents it drives (archive.ts).
+// - The service reads the text of a file in its chats, such as a PDF a person attached (uploads.ts),
+//   and each request lists the files on its message.
 // - A request nobody has picked up after two minutes gets one note in its chat, so people know the
 //   agent isn't ignoring them.
 //
@@ -124,6 +126,14 @@ export class DrivenAgents {
       from: { type: r.from_type, handle: this.handleOf(r.from_type, r.from_id) },
       text: r.text,
       messageId: r.message_id,
+      // the files a person attached to the message (uploads.ts), with whether each one's text is ready
+      files: r.message_id
+        ? (
+            this.app.db
+              .prepare("SELECT f.*, t.state AS text_state, t.reason AS text_reason, t.pages AS text_pages FROM files f LEFT JOIN file_texts t ON t.file_id = f.id WHERE f.message_id = ? ORDER BY f.created_at")
+              .all(r.message_id) as any[]
+          ).map(fileJson)
+        : [],
       hop: r.hop,
       goalId: r.goal_id,
       state: r.state,
@@ -316,6 +326,13 @@ export class DrivenAgents {
         }
       }),
     );
+
+    // a file's text: a person's PDF, .txt or .md (uploads.ts), or an agent's text file, and why there is none
+    api.get("/api/service/files/:id/text", (c) => {
+      const r = db.prepare("SELECT * FROM files WHERE id = ?").get(c.req.param("id")) as any;
+      if (!r || !this.chatIds(me(c).id).has(r.chat_id)) return c.json({ error: "no such file" }, 404);
+      return c.json(this.app.uploads.text(r.id));
+    });
     api.get("/api/service/files/:id", (c) => {
       const r = db.prepare("SELECT * FROM files WHERE id = ?").get(c.req.param("id")) as any;
       if (!r || !this.chatIds(me(c).id).has(r.chat_id)) return c.json({ error: "no such file" }, 404);
