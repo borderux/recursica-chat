@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Deactivated people: an admin can turn a person's account off, and on again. 2.0 never deletes a
-// person, so their messages keep their author.
+// Deactivated people: an admin can turn a person's account off, and on again. A person who took
+// part is never deleted, so their messages keep their author: root deletes only a deactivated
+// account with no work at all, from the CLI (deleteperson.ts).
 //
 // - Deactivating ends every session of the person at once, and closes their live connections.
 // - A deactivated person can't sign in by any way: a password, Google, the hosted control plane's

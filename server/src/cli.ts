@@ -6,6 +6,7 @@
 //   node server/src/cli.ts set-password-hash <email>   new scrypt hash on stdin; signs that person out everywhere
 //   node server/src/cli.ts session <email> [--minutes N]   root only: a session of at most an hour for a member (clisession.ts)
 //   node server/src/cli.ts end-sessions <email>           root only: signs that member out everywhere
+//   node server/src/cli.ts delete-person <email>          root only: a deactivated account with no work (deleteperson.ts)
 //   node server/src/cli.ts set-provider <id> --base-url <url> --models <a,b>   root only: key on stdin (cliprovider.ts)
 //   node server/src/cli.ts provider-key-hash <id>         root only: the SHA-256 of the provider's stored key
 //   node server/src/cli.ts manage|unmanage <handle>       root only: an agent whose settings come from a repository (managed.ts)
@@ -27,9 +28,10 @@ import { asDataOwner, sessionArgs, memberSession, endSessions } from "./clisessi
 import { providerArgs, setProvider, providerKeyHash } from "./cliprovider.ts";
 import { agentGet, agentModels, agentSet, manage, parseSettings } from "./managed.ts";
 import { SERVICE_COMMANDS, serviceCommand } from "./serviceaccounts.ts";
+import { deletePerson } from "./deleteperson.ts";
 
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
-const ROOT_ONLY = new Set(["session", "end-sessions", "set-provider", "provider-key-hash", "manage", "unmanage", "agent-get", "agent-set", "agent-models", ...SERVICE_COMMANDS]);
+const ROOT_ONLY = new Set(["session", "end-sessions", "delete-person", "set-provider", "provider-key-hash", "manage", "unmanage", "agent-get", "agent-set", "agent-models", ...SERVICE_COMMANDS]);
 if (ROOT_ONLY.has(process.argv[2])) {
   const refused = asDataOwner(dataDir);
   if (refused) {
@@ -107,6 +109,14 @@ if (cmd === "export") {
     console.error((e as Error).message);
     process.exit(3);
   }
+} else if (cmd === "delete-person") {
+  try {
+    if (process.argv.length !== 4) throw new Error("usage: cli.ts delete-person <email>");
+    for (const line of deletePerson(app.db, process.argv[3])) process.stdout.write(line + "\n");
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(3);
+  }
 } else if (cmd === "set-provider" || cmd === "provider-key-hash") {
   try {
     if (cmd === "set-provider") {
@@ -160,7 +170,7 @@ if (cmd === "export") {
     process.exit(3);
   }
 } else {
-  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id> | manage|unmanage|agent-get <handle> | agent-set <handle> [--check] | agent-models | service-create|service-token|service-revoke <name> | service-list");
+  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | delete-person <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id> | manage|unmanage|agent-get <handle> | agent-set <handle> [--check] | agent-models | service-create|service-token|service-revoke <name> | service-list");
   process.exit(2);
 }
 app.db.close();

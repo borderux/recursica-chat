@@ -12,7 +12,9 @@
 // - The service writes lines in the agent's Watch view (its activity), for the detail people don't
 //   need in the chat.
 // - The service attaches text files to a task for the agent, on the task alone and as the agent's
-//   own, with attach_files's names, types and limits (files.ts's attachTaskText).
+//   own, with attach_files's names, types and limits (files.ts's attachTaskText), zips the agent's
+//   files of a plan onto a task (zipTaskFiles), and deletes such files of its agents, never anyone
+//   else's (deleteTaskFile).
 // - The service archives and restores the tasks of the agents it drives (archive.ts).
 // - A request nobody has picked up after two minutes gets one note in its chat, so people know the
 //   agent isn't ignoring them.
@@ -37,7 +39,7 @@ import { now } from "./db.ts";
 import { id } from "./crypto.ts";
 import { personHandle } from "./profile.ts";
 import { eventVisible, statusSeenBy } from "./eventfilter.ts";
-import { attachTaskText, fileJson, fileDownload, FileRefusal } from "./files.ts";
+import { attachTaskText, deleteTaskFile, fileJson, fileDownload, FileRefusal, zipTaskFiles } from "./files.ts";
 import { ArchiveRefusal, setArchived, TASK_STATUSES } from "./archive.ts";
 import { driverOf, drivenAgents, serviceById, serviceForToken, serviceRequest, serviceTables, type ServiceAccount } from "./serviceaccounts.ts";
 
@@ -273,6 +275,45 @@ export class DrivenAgents {
         if (!task && !chat) throw new HttpRefusal(400, "ask for a task's files (?task=) or a chat's (?chat=)");
         const rows = (task ? db.prepare("SELECT * FROM files WHERE task_id = ? ORDER BY created_at").all(task) : db.prepare("SELECT * FROM files WHERE chat_id = ? ORDER BY created_at").all(chat)) as any[];
         return c.json({ files: rows.filter((r) => ids.has(r.chat_id)).map(fileJson) });
+      }),
+    );
+    // a zip on a task, for the agent, of the agent's files in the task's plan: on the task alone, as the
+    // agent's own, so the service bundles a set without asking the agent for a turn
+    api.post(
+      "/api/service/agents/:handle/zip",
+      handled(async (c) => {
+        const s = me(c);
+        const a = this.agentFor(s, c.req.param("handle"));
+        const b = await body(c);
+        const t = svc.task(String(b.task ?? ""));
+        if (!t || !this.chatIds(s.id).has(t.chatId)) throw new HttpRefusal(404, "no such task");
+        if (!svc.isMember(t.chatId, "agent", a.id)) throw new HttpRefusal(409, `@${a.handle} isn't in that task's chat`);
+        let stored;
+        try {
+          stored = zipTaskFiles({ db, svc, dataDir: this.app.cfg.dataDir }, { chatId: t.chatId, taskId: t.id, agentId: a.id, name: b.name, include: b.include });
+        } catch (e) {
+          if (e instanceof FileRefusal) throw new HttpRefusal(400, e.message);
+          throw e;
+        }
+        return c.json({ file: fileJson(db.prepare("SELECT * FROM files WHERE id = ?").get(stored.id)) });
+      }),
+    );
+
+    // a file on a task alone that one of the service's agents attached, or the service for it: never
+    // anyone else's, and never a file on a message
+    api.delete(
+      "/api/service/files/:id",
+      handled((c) => {
+        const s = me(c);
+        const r = db.prepare("SELECT * FROM files WHERE id = ?").get(c.req.param("id")) as any;
+        if (!r || !this.chatIds(s.id).has(r.chat_id)) throw new HttpRefusal(404, "no such file");
+        if (!drivenAgents(db, s.id).some((a) => a.id === r.agent_id)) throw new HttpRefusal(403, `${s.name} may delete only the files of the agents it drives`);
+        try {
+          return c.json({ deleted: deleteTaskFile({ db, svc, dataDir: this.app.cfg.dataDir }, r.id) });
+        } catch (e) {
+          if (e instanceof FileRefusal) throw new HttpRefusal(409, e.message);
+          throw e;
+        }
       }),
     );
     api.get("/api/service/files/:id", (c) => {
