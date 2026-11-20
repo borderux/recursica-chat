@@ -13,6 +13,7 @@ import { ENGINES, agentDirs, dockerfileFor, REPO_ROOT, type ModelProvider } from
 import { attachFilesTool } from "./files.ts";
 import { Triggers } from "./triggers.ts";
 import { SlackBridge } from "./bridges/slack.ts";
+import { DrivenAgents } from "./drivenagents.ts";
 
 const execFileP = promisify(execFile);
 
@@ -45,6 +46,7 @@ export class App {
   gateway: Gateway;
   runtime: AgentRuntime;
   triggers: Triggers;
+  driven: DrivenAgents;
   bridges = new Map<string, SlackBridge>();
   engineJobs = new Map<string, { state: "running" | "done" | "error"; log: string }>();
 
@@ -66,6 +68,7 @@ export class App {
     });
     this.runtime.approvalTtlMs = cfg.approvalTtlMs;
     this.triggers = new Triggers(this.db, this.svc);
+    this.driven = new DrivenAgents(this); // agents a service drives (drivenagents.ts)
   }
 
   start(): void {
@@ -77,10 +80,12 @@ export class App {
       if (this.cfg.warmOnBoot) void this.runtime.warmRecent().catch(() => undefined);
     });
     this.triggers.start();
+    this.driven.start();
     void this.startBridges();
   }
   async stop(): Promise<void> {
     this.triggers.stop();
+    this.driven.stop();
     for (const b of this.bridges.values()) b.stop();
     await this.runtime.shutdown();
     await this.gateway.closeAll();

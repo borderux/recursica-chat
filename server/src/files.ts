@@ -504,11 +504,9 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
 
 // ---------------------------------------------------------------- routes
 /** The download and list routes. Register them after the session check. */
-export function registerFiles(api: Hono<any>, db: DB, dataDir: string, sees: (user: any, chatId: string) => boolean): void {
-  fileTables(db);
-  sweepFiles(db, dataDir);
-  const visible = (c: any, rows: any[]) => rows.filter((r) => sees(c.get("user"), r.chat_id));
-  const out = (r: any) => ({
+/** A file's record as the API returns it. */
+export function fileJson(r: any) {
+  return {
     id: r.id,
     name: r.name,
     size: r.size,
@@ -517,7 +515,29 @@ export function registerFiles(api: Hono<any>, db: DB, dataDir: string, sees: (us
     taskId: r.task_id,
     agentId: r.agent_id,
     createdAt: r.created_at,
+  };
+}
+
+/** The response that downloads a file the caller may see. */
+export function fileDownload(c: any, dataDir: string, r: any) {
+  const path = join(filesDir(dataDir), r.id);
+  if (!existsSync(path)) return c.json({ error: "the file is missing from the server" }, 410);
+  const ascii = r.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  return c.body(readFileSync(path), 200, {
+    "content-type": "application/octet-stream",
+    "content-disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(r.name)}`,
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; sandbox",
+    "cache-control": "private, no-store",
+    "cross-origin-resource-policy": "same-origin",
   });
+}
+
+export function registerFiles(api: Hono<any>, db: DB, dataDir: string, sees: (user: any, chatId: string) => boolean): void {
+  fileTables(db);
+  sweepFiles(db, dataDir);
+  const visible = (c: any, rows: any[]) => rows.filter((r) => sees(c.get("user"), r.chat_id));
+  const out = fileJson;
 
   // the files on tasks the person can see, or on one task, or in one chat
   api.get("/api/files", (c) => {
@@ -534,16 +554,6 @@ export function registerFiles(api: Hono<any>, db: DB, dataDir: string, sees: (us
   api.get("/api/files/:id", (c) => {
     const r = db.prepare("SELECT * FROM files WHERE id = ?").get(c.req.param("id")) as any;
     if (!r || !sees(c.get("user"), r.chat_id)) return c.json({ error: "no such file" }, 404);
-    const path = join(filesDir(dataDir), r.id);
-    if (!existsSync(path)) return c.json({ error: "the file is missing from the server" }, 410);
-    const ascii = r.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
-    return c.body(readFileSync(path), 200, {
-      "content-type": "application/octet-stream",
-      "content-disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(r.name)}`,
-      "x-content-type-options": "nosniff",
-      "content-security-policy": "default-src 'none'; sandbox",
-      "cache-control": "private, no-store",
-      "cross-origin-resource-policy": "same-origin",
-    });
+    return fileDownload(c, dataDir, r);
   });
 }

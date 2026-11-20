@@ -135,6 +135,10 @@ export class AgentWorker {
     } catch {}
     this.svc.bus.emitEvent({ type: "agent_activity", agentId: this.agentId, chatId, entry: e });
   }
+  /** An entry from outside the engine, such as from the service that drives this agent (drivenagents.ts). */
+  note(text: string, chatId = ""): void {
+    this.log({ kind: "lifecycle", text }, chatId);
+  }
   recentActivity(limit = 200): ActivityEntry[] {
     if (this.activity.length) return this.activity.slice(-limit);
     if (!existsSync(this.logPath)) return [];
@@ -599,7 +603,9 @@ export class AgentWorker {
     const from =
       d.fromType === "trigger"
         ? `trigger "${d.fromId}"`
-        : `${this.rt.gateway.authorName(d.fromType, d.fromId)} (${d.fromType === "agent" ? "an agent" : "a person"})`;
+        : d.fromType === "service"
+          ? `${this.rt.gateway.authorName("service", d.fromId)} (a service)`
+          : `${this.rt.gateway.authorName(d.fromType, d.fromId)} (${d.fromType === "agent" ? "an agent" : "a person"})`;
     if (d.fromType === "user" && mentions(d.text).some((h) => MENTION_ALL.has(h)) && this.svc.chatAgents(d.chatId).length > 1)
       parts.push("This message went to every agent in the chat at once. Answer only the part that fits your job, keep it short, and don't repeat what the others will say.");
     parts.push(`<<<MESSAGE>>>\nFrom ${from}:\n${d.text}\n<<<END>>>`);

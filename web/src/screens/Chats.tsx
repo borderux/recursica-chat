@@ -439,7 +439,7 @@ function NowStrip({ agents: raw }: { agents: Agent[] }) {
 }
 
 // ---------------------------------------------------------------- thread rendering
-const CENTRED = new Set(["handoff", "memory", "system", "error", "trigger"]);
+const CENTRED = new Set(["handoff", "memory", "system", "error", "trigger", "service"]);
 
 function Thread({ msgs, chat, approvals }: { msgs: Message[]; chat: Chat; approvals: Record<string, Approval> }) {
   const { me } = useStore();

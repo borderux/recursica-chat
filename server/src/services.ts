@@ -13,7 +13,7 @@ export interface Message {
   chatId: string;
   authorType: "user" | "agent" | "system";
   authorId: string;
-  kind: "text" | "plan" | "approval" | "handoff" | "memory" | "system" | "error" | "trigger";
+  kind: "text" | "plan" | "approval" | "handoff" | "memory" | "system" | "error" | "trigger" | "service";
   body: string;
   meta: Record<string, any>;
   ts: number;
@@ -66,7 +66,7 @@ export interface Delivery {
   id: string;
   agentId: string;
   chatId: string;
-  fromType: "user" | "agent" | "trigger" | "system";
+  fromType: "user" | "agent" | "trigger" | "system" | "service";
   fromId: string;
   text: string;
   hop: number;
@@ -94,6 +94,8 @@ export type DeliveryListener = (d: Delivery) => void;
 
 export class Services {
   private deliveryListeners: DeliveryListener[] = [];
+  /** Takes a delivery for an agent that a service drives, in place of the agent (drivenagents.ts). */
+  divert: ((d: { agentId: string; chatId: string; fromType: Delivery["fromType"]; fromId: string; text: string; hop: number; goalId: string; sourceMessageId?: string }) => Delivery | null) | null = null;
   db: DB;
   bus: Bus;
   constructor(db: DB, bus: Bus) {
@@ -321,6 +323,10 @@ export class Services {
         meta: { reason: "hop_limit", goalId: d.goalId },
       });
       return null;
+    }
+    if (d.fromType !== "service" && this.divert) {
+      const taken = this.divert(d);
+      if (taken) return taken;
     }
     const did = id("d_");
     try {

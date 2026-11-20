@@ -19,6 +19,7 @@ import { connectionHeaders, formEncode } from "./apps.ts";
 import { toolDefault, neverByName, neverHttp } from "./toolpolicy.ts";
 import type { Services, Agent } from "./services.ts";
 import { personHandle } from "./profile.ts";
+import { serviceById } from "./serviceaccounts.ts";
 
 export type Decision = "allow" | "ask" | "block" | "off";
 type Category = "core" | "read" | "write" | "danger";
@@ -421,6 +422,7 @@ export class Gateway {
   }
   authorName(type: string, aid: string): string {
     if (type === "system") return "CircleChat";
+    if (type === "service") return serviceById(this.db, aid)?.name ?? "a service";
     if (type === "agent") return this.svc.agent(aid)?.name ?? "agent";
     // people appear as @username, to agents too (server/src/profile.ts)
     const h = personHandle(this.db, aid);
