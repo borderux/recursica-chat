@@ -100,6 +100,10 @@ export class Services {
   private deliveryListeners: DeliveryListener[] = [];
   /** Takes a delivery for an agent that a service drives, in place of the agent (drivenagents.ts). */
   divert: ((d: { agentId: string; chatId: string; fromType: Delivery["fromType"]; fromId: string; text: string; hop: number; goalId: string; sourceMessageId?: string }) => Delivery | null) | null = null;
+  /** A service's own instruction to an agent it drives (drivenagents.ts): whether the reply goes to the service alone. Null for any other delivery. */
+  instruction: ((deliveryId: string) => { private: boolean } | null) | null = null;
+  /** Takes the reply to a private instruction, in place of a chat message (drivenagents.ts). */
+  privateReply: ((d: Delivery, body: string) => void) | null = null;
   db: DB;
   bus: Bus;
   constructor(db: DB, bus: Bus) {

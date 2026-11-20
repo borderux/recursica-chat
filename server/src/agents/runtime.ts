@@ -61,7 +61,7 @@ export class AgentWorker {
   private containerName = "";
   private agentToken = "";
   private modelToken = "";
-  currentRequester?: { type: string; id: string };
+  currentRequester?: { type: string; id: string; quiet?: boolean };
   get currentChat(): string | undefined {
     return this.activeChat;
   }
@@ -470,13 +470,17 @@ export class AgentWorker {
       return;
     }
     this.svc.setDeliveryState(d.id, "injected");
-    this.currentRequester = { type: d.fromType, id: d.fromId };
+    // a service's private instruction: the reply goes to the service alone, never to the chat
+    const quiet = this.svc.instruction?.(d.id)?.private === true;
+    this.currentRequester = { type: d.fromType, id: d.fromId, ...(quiet ? { quiet } : {}) };
+    // the session's tools read the requester from its token
+    this.rt.gateway.updateRequester(session.token, this.currentRequester);
     this.activeSession = session.sessionId;
     this.activeChat = d.chatId;
     this.replyBuf.set(session.sessionId, "");
     this.setState("working", firstLine(d.text), d.chatId);
     this.svc.bus.emitEvent({ type: "typing", chatId: d.chatId, agentId: a.id, on: true });
-    const text = this.compose(a, d, session);
+    const text = this.compose(a, d, session, quiet);
     this.log({ kind: "prompt", text: `${this.rt.gateway.authorName(d.fromType === "trigger" ? "system" : d.fromType, d.fromId)}: ${d.text}` }, d.chatId);
     session.primed = true;
     session.lastSeenTs = now();
@@ -504,7 +508,8 @@ export class AgentWorker {
         this.svc.setDeliveryState(d.id, "failed", "cancelled");
         this.log({ kind: "lifecycle", text: "turn cancelled" });
       } else {
-        if (textCall)
+        if (textCall && quiet) this.log({ kind: "error", text: "the reply was a tool call written as text, so nothing ran" }, d.chatId);
+        else if (textCall)
           this.svc.insertMessage({
             chatId: d.chatId,
             authorType: "system",
@@ -513,7 +518,10 @@ export class AgentWorker {
             body: `${a.name} tried to use a tool by writing it out instead of calling it, so nothing ran. Ask again, or switch ${a.name} to a model that supports tool calling.`,
             meta: { agentId: a.id, deliveryId: d.id, reason: "text_tool_call" },
           });
-        else if (reply)
+        else if (reply && quiet && this.svc.privateReply) {
+          this.svc.privateReply(d, reply);
+          this.log({ kind: "lifecycle", text: "the reply went to the service alone, not to the chat" }, d.chatId);
+        } else if (reply)
           this.svc.post({
             chatId: d.chatId,
             authorType: "agent",
@@ -530,7 +538,8 @@ export class AgentWorker {
       const msg = (e as Error).message;
       this.svc.setDeliveryState(d.id, "failed", msg);
       // Never retry a whole turn automatically: it may have had side effects.
-      this.svc.insertMessage({
+      if (quiet) this.log({ kind: "error", text: `stopped before finishing (${msg})` }, d.chatId);
+      else this.svc.insertMessage({
         chatId: d.chatId,
         authorType: "system",
         authorId: "",
@@ -550,7 +559,7 @@ export class AgentWorker {
   }
 
   /** What the CLI agent actually receives. The briefing goes in once per session. */
-  private compose(a: Agent, d: Delivery, s: SessionInfo): string {
+  private compose(a: Agent, d: Delivery, s: SessionInfo, quiet = false): string {
     const parts: string[] = [];
     const chat = this.svc.chat(d.chatId);
     if (!s.primed) {
@@ -608,6 +617,7 @@ export class AgentWorker {
           : `${this.rt.gateway.authorName(d.fromType, d.fromId)} (${d.fromType === "agent" ? "an agent" : "a person"})`;
     if (d.fromType === "user" && mentions(d.text).some((h) => MENTION_ALL.has(h)) && this.svc.chatAgents(d.chatId).length > 1)
       parts.push("This message went to every agent in the chat at once. Answer only the part that fits your job, keep it short, and don't repeat what the others will say.");
+    if (quiet) parts.push("Your reply to this message goes to the service alone, not to the chat, and nobody in the chat sees it. Post nothing to the chat this turn.");
     parts.push(`<<<MESSAGE>>>\nFrom ${from}:\n${d.text}\n<<<END>>>`);
     return parts.filter(Boolean).join("\n\n");
   }

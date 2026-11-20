@@ -9,6 +9,10 @@
 // - Only the service's own messages reach the agent. The service posts in any chat the agent is in,
 //   without being a member: a one-line note people see, and the full text, which goes only to the
 //   agent. A note alone wakes nobody.
+// - An instruction marked private gets its reply back alone: the agent's reply goes to the service
+//   (service_replies, and a service_reply event on its socket) and to the agent's Watch view, never
+//   to the chat. The turn posts no chat_post progress line, and a failure is a Watch line, not an
+//   error card. People see only the service's note.
 // - The service writes lines in the agent's Watch view (its activity), for the detail people don't
 //   need in the chat.
 // - The service attaches text files to a task for the agent, on the task alone and as the agent's
@@ -63,7 +67,13 @@ function requestTables(app: App): void {
       state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','taken','done','declined')),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, noted_at INTEGER
     );
-    CREATE INDEX IF NOT EXISTS service_requests_state ON service_requests(service_id, state);`,
+    CREATE INDEX IF NOT EXISTS service_requests_state ON service_requests(service_id, state);
+    CREATE TABLE IF NOT EXISTS service_instructions (
+      delivery_id TEXT PRIMARY KEY, service_id TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS service_replies (
+      delivery_id TEXT PRIMARY KEY, service_id TEXT NOT NULL, agent_id TEXT NOT NULL, chat_id TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL
+    );`,
   );
 }
 
@@ -87,6 +97,11 @@ export class DrivenAgents {
     requestTables(app);
     this.requests.setMaxListeners(0);
     app.svc.divert = (d) => this.take(d);
+    app.svc.instruction = (deliveryId) => {
+      const r = app.db.prepare("SELECT private FROM service_instructions WHERE delivery_id = ?").get(deliveryId) as any;
+      return r ? { private: r.private === 1 } : null;
+    };
+    app.svc.privateReply = (d, body) => this.reply(d, body);
   }
   start(): void {
     this.timer = setInterval(() => this.noteWaiting(), 30_000);
@@ -140,6 +155,18 @@ export class DrivenAgents {
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
+  }
+  /** The reply to a private instruction: kept for the service, and sent on its socket. */
+  reply(d: Delivery, body: string): void {
+    const r = this.app.db.prepare("SELECT service_id FROM service_instructions WHERE delivery_id = ?").get(d.id) as any;
+    if (!r) return;
+    const t = now();
+    this.app.db.prepare("INSERT OR REPLACE INTO service_replies(delivery_id, service_id, agent_id, chat_id, body, ts) VALUES(?,?,?,?,?,?)").run(d.id, r.service_id, d.agentId, d.chatId, body, t);
+    this.requests.emit("reply", r.service_id, this.replyJson(d.id));
+  }
+  private replyJson(deliveryId: string): any {
+    const r = this.app.db.prepare("SELECT * FROM service_replies WHERE delivery_id = ?").get(deliveryId) as any;
+    return r ? { deliveryId: r.delivery_id, agent: this.app.svc.agent(r.agent_id)?.handle ?? "", chatId: r.chat_id, body: r.body, ts: r.ts } : null;
   }
   private handleOf(type: string, fid: string): string {
     if (type === "user") return personHandle(this.app.db as any, fid) ?? "";
@@ -225,6 +252,15 @@ export class DrivenAgents {
       return r;
     };
     api.get("/api/service/requests/:id", handled((c) => c.json({ request: this.request(ownRequest(c).id) })));
+    // the reply to one of the service's private instructions, null until the turn ends with one
+    api.get(
+      "/api/service/deliveries/:id/reply",
+      handled((c) => {
+        const r = db.prepare("SELECT service_id FROM service_instructions WHERE delivery_id = ?").get(c.req.param("id")) as any;
+        if (!r || r.service_id !== me(c).id) throw new HttpRefusal(404, "no such private instruction");
+        return c.json({ reply: this.replyJson(c.req.param("id")) });
+      }),
+    );
     api.patch(
       "/api/service/requests/:id",
       handled(async (c) => {
@@ -357,11 +393,15 @@ export class DrivenAgents {
           if (!text.trim()) throw new HttpRefusal(400, "the text for the agent is missing");
           if (text.length > MAX_TEXT) throw new HttpRefusal(400, `the text is longer than ${MAX_TEXT} characters`);
         } else if (b.text !== undefined) throw new HttpRefusal(400, "text goes to an agent: name the agent");
+        if (b.private !== undefined && typeof b.private !== "boolean") throw new HttpRefusal(400, "private is true or false");
+        if (b.private && !agent) throw new HttpRefusal(400, "a private instruction goes to an agent: name the agent");
         const message = svc.insertMessage({ chatId: chat.id, authorType: "system", authorId: s.id, kind: "service", body: note, meta: { service: s.name, agent: agent?.handle ?? "" } });
         const delivery = agent
           ? svc.deliver({ agentId: agent.id, chatId: chat.id, fromType: "service", fromId: s.id, text, hop: 0, goalId: String(b.goalId ?? "") || id("goal_"), sourceMessageId: message.id })
           : null;
-        return c.json({ message, delivery });
+        // the turn reads this after it starts, which is always later than this line
+        if (delivery && b.private) db.prepare("INSERT INTO service_instructions(delivery_id, service_id, private, created_at) VALUES(?,?,1,?)").run(delivery.id, s.id, now());
+        return c.json({ message, delivery: delivery && { ...delivery, private: b.private === true } });
       }),
     );
 
@@ -446,6 +486,8 @@ export class DrivenAgents {
     const send = (e: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(e));
     const onRequest = (sid: string, request: unknown) => sid === s.id && send({ type: "service_request", request });
     this.requests.on("request", onRequest);
+    const onReply = (sid: string, reply: unknown) => sid === s.id && send({ type: "service_reply", reply });
+    this.requests.on("reply", onReply);
     const off = this.app.bus.onEvent((e) => {
       if (!EVENT_TYPES.has(e.type)) return;
       const ids = this.chatIds(s.id);
@@ -465,6 +507,7 @@ export class DrivenAgents {
     ws.on("close", () => {
       off();
       this.requests.off("request", onRequest);
+      this.requests.off("reply", onReply);
       clearInterval(check);
     });
     send({ type: "hello", service: s.name });
