@@ -9,6 +9,9 @@
 // - Only the service's own messages reach the agent. The service posts in any chat the agent is in,
 //   without being a member: a one-line note people see, and the full text, which goes only to the
 //   agent. A note alone wakes nobody.
+// - An instruction marked fresh runs in a session of its own, with no history: the agent sees only
+//   its briefing and the instruction. The session isn't stored or resumed, and ends with the turn,
+//   so the chat's own session is left as it was.
 // - An instruction marked private gets its reply back alone: the agent's reply goes to the service
 //   (service_replies, and a service_reply event on its socket) and to the agent's Watch view, never
 //   to the chat. The turn posts no chat_post progress line, and a failure is a Watch line, not an
@@ -69,13 +72,23 @@ function requestTables(app: App): void {
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, noted_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS service_requests_state ON service_requests(service_id, state);
-    CREATE TABLE IF NOT EXISTS service_instructions (
-      delivery_id TEXT PRIMARY KEY, service_id TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+`,
+  );
+  instructionTables(app.db);
+}
+
+/** The service's own instructions, marked private or fresh, and the replies to private ones. */
+export function instructionTables(db: App["db"]): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS service_instructions (
+      delivery_id TEXT PRIMARY KEY, service_id TEXT NOT NULL, private INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+      fresh INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS service_replies (
       delivery_id TEXT PRIMARY KEY, service_id TEXT NOT NULL, agent_id TEXT NOT NULL, chat_id TEXT NOT NULL, body TEXT NOT NULL, ts INTEGER NOT NULL
-    );`,
-  );
+    );`);
+  // a server that kept service_instructions from before "fresh": the column is added once
+  const cols = (db.prepare("SELECT name FROM pragma_table_info('service_instructions')").all() as any[]).map((c) => c.name);
+  if (!cols.includes("fresh")) db.exec("ALTER TABLE service_instructions ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0");
 }
 
 class HttpRefusal extends Error {
@@ -99,8 +112,8 @@ export class DrivenAgents {
     this.requests.setMaxListeners(0);
     app.svc.divert = (d) => this.take(d);
     app.svc.instruction = (deliveryId) => {
-      const r = app.db.prepare("SELECT private FROM service_instructions WHERE delivery_id = ?").get(deliveryId) as any;
-      return r ? { private: r.private === 1 } : null;
+      const r = app.db.prepare("SELECT private, fresh FROM service_instructions WHERE delivery_id = ?").get(deliveryId) as any;
+      return r ? { private: r.private === 1, fresh: r.fresh === 1 } : null;
     };
     app.svc.privateReply = (d, body) => this.reply(d, body);
   }
@@ -257,8 +270,8 @@ export class DrivenAgents {
     api.get(
       "/api/service/deliveries/:id/reply",
       handled((c) => {
-        const r = db.prepare("SELECT service_id FROM service_instructions WHERE delivery_id = ?").get(c.req.param("id")) as any;
-        if (!r || r.service_id !== me(c).id) throw new HttpRefusal(404, "no such private instruction");
+        const r = db.prepare("SELECT service_id, private FROM service_instructions WHERE delivery_id = ?").get(c.req.param("id")) as any;
+        if (!r || r.service_id !== me(c).id || r.private !== 1) throw new HttpRefusal(404, "no such private instruction");
         return c.json({ reply: this.replyJson(c.req.param("id")) });
       }),
     );
@@ -397,13 +410,16 @@ export class DrivenAgents {
         } else if (b.text !== undefined) throw new HttpRefusal(400, "text goes to an agent: name the agent");
         if (b.private !== undefined && typeof b.private !== "boolean") throw new HttpRefusal(400, "private is true or false");
         if (b.private && !agent) throw new HttpRefusal(400, "a private instruction goes to an agent: name the agent");
+        if (b.fresh !== undefined && typeof b.fresh !== "boolean") throw new HttpRefusal(400, "fresh is true or false");
+        if (b.fresh && !agent) throw new HttpRefusal(400, "a fresh session is for an instruction to an agent: name the agent");
         const message = note ? svc.insertMessage({ chatId: chat.id, authorType: "system", authorId: s.id, kind: "service", body: note, meta: { service: s.name, agent: agent?.handle ?? "" } }) : null;
         const delivery = agent
           ? svc.deliver({ agentId: agent.id, chatId: chat.id, fromType: "service", fromId: s.id, text, hop: 0, goalId: String(b.goalId ?? "") || id("goal_"), sourceMessageId: message?.id })
           : null;
         // the turn reads this after it starts, which is always later than this line
-        if (delivery && b.private) db.prepare("INSERT INTO service_instructions(delivery_id, service_id, private, created_at) VALUES(?,?,1,?)").run(delivery.id, s.id, now());
-        return c.json({ message, delivery: delivery && { ...delivery, private: b.private === true } });
+        if (delivery && (b.private || b.fresh))
+          db.prepare("INSERT INTO service_instructions(delivery_id, service_id, private, fresh, created_at) VALUES(?,?,?,?,?)").run(delivery.id, s.id, b.private ? 1 : 0, b.fresh ? 1 : 0, now());
+        return c.json({ message, delivery: delivery && { ...delivery, private: b.private === true, fresh: b.fresh === true } });
       }),
     );
 
