@@ -5,6 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { startApp, setupOwner, mockAgent, agentReply, waitFor, type Harness } from "./helpers.ts";
 import { serviceCommand } from "../server/src/serviceaccounts.ts";
 import { NOTE_AFTER_MS } from "../server/src/drivenagents.ts";
@@ -278,6 +280,55 @@ test("a service attaches a text file to a task for its agent: on the task alone,
     assert.equal((await post("designer", { ...ok, name: "../../etc/notes.txt" })).json.files[0].name, "notes.txt", "a safe base name");
     setSetting(db, "files_max_bytes", "10");
     assert.match((await post("designer", ok)).json.error, /file space is full/);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a service deletes a file on a task alone that its agent attached, or it did for the agent; never anyone else's, never one on a message", async () => {
+  const h = await startApp();
+  try {
+    const owner = await setupOwner(h);
+    const designer = await mockAgent(owner, "designer");
+    const writer = await mockAgent(owner, "writer");
+    const db = h.app.db;
+    serviceCommand(db, "service-create", ["example-service"]);
+    serviceCommand(db, "service-drive", ["example-service", "designer"]);
+    const call = svcCall(h, serviceCommand(db, "service-token", ["example-service"]).stdout ?? "");
+    const group = (await owner.post("/api/chats", { name: "Group", agents: [designer.id, writer.id] })).json.chat;
+    const elsewhere = (await owner.post("/api/chats", { name: "Elsewhere", agents: [writer.id] })).json.chat;
+    const task = (await owner.post("/api/tasks", { chatId: group.id, title: "Interview 1 of 1 — A made-up gadget" })).json.task;
+    const hiddenTask = (await owner.post("/api/tasks", { chatId: elsewhere.id, title: "Not the service's" })).json.task;
+    const attach = async (agent: any, chatId: string, args: any) => {
+      const r = await h.app.gateway.call("attach_files", args, { agent: h.app.svc.agent(agent.id)!, chatId, requester: { type: "user", id: "" } });
+      assert.equal(r.isError, false, r.text);
+      return [...r.text.matchAll(/\((f_[\w-]+)\)/g)].map((m) => m[1]);
+    };
+    const [draft] = await attach(designer, group.id, { files: [{ name: "gadget-interview-1-stretch-1.txt", text: "a draft" }], task: task.id, task_only: true });
+    const [theirs] = await attach(writer, group.id, { files: [{ name: "writer-notes.txt", text: "not the designer's" }], task: task.id, task_only: true });
+    const [posted] = await attach(designer, group.id, { files: [{ name: "shown-in-chat.txt", text: "on a message" }], task: task.id });
+    const [far] = await attach(writer, elsewhere.id, { files: [{ name: "far.txt", text: "x" }], task: hiddenTask.id, task_only: true });
+    const mine = (await call("POST", "/api/service/agents/designer/files", { task: task.id, name: "service-made.txt", text: "the service's" })).json.files[0].id;
+    const blob = join(h.dir, "files", draft);
+    assert.ok(existsSync(blob));
+
+    const r = await call("DELETE", `/api/service/files/${draft}`);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.deleted.name, "gadget-interview-1-stretch-1.txt");
+    assert.ok(!existsSync(blob), "its stored copy too");
+    assert.equal((await call("GET", `/api/service/files/${draft}`)).status, 404);
+    assert.equal((await call("DELETE", `/api/service/files/${mine}`)).status, 200, "one the service attached for its agent");
+
+    assert.equal((await call("DELETE", `/api/service/files/${theirs}`)).status, 403, "another agent's");
+    const onMessage = await call("DELETE", `/api/service/files/${posted}`);
+    assert.equal(onMessage.status, 409, "one on a message stays");
+    assert.match(onMessage.json.error, /on a message/);
+    assert.equal((await call("DELETE", `/api/service/files/${far}`)).status, 404, "in a chat the service doesn't see");
+    assert.equal((await call("DELETE", "/api/service/files/f_none")).status, 404);
+    assert.deepEqual(
+      (await call("GET", `/api/service/files?task=${task.id}`)).json.files.map((f: any) => f.name).sort(),
+      ["shown-in-chat.txt", "writer-notes.txt"],
+    );
   } finally {
     await h.close();
   }

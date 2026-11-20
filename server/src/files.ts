@@ -20,7 +20,8 @@
 // - `task_only` attaches the files to the task alone, with no message in the chat: the parts of a
 //   document, say, that would crowd the chat. Such a file's message id is empty.
 // - attachTaskText does the same for a service that drives the agent: one text file, and its .md
-//   copy, on a task alone, as the agent's own, with the same checks.
+//   copy, on a task alone, as the agent's own, with the same checks. deleteTaskFile removes such a
+//   file, on a task alone, for that service: a draft, say, once the finished file is there.
 // - `markdown` on a .txt file also saves a .md copy with light formatting the server adds: the first
 //   paragraph as a heading, and each speaker line's name in bold.
 // - A download needs a session and a person who can see the chat. It is always served as an
@@ -539,6 +540,23 @@ export function attachTaskText(deps: { db: DB; svc: Services; dataDir: string },
   });
   svc.updateTask(a.taskId, {}); // the task changed: views showing its files refresh
   return stored;
+}
+
+/**
+ * Deletes a file that sits on a task alone (no message), and its stored copy: a service tidying up
+ * drafts its driven agent attached (drivenagents.ts). The caller checks whose file it is. A file on a
+ * message is never deleted here: the message shows it.
+ */
+export function deleteTaskFile(deps: { db: DB; svc: Services; dataDir: string }, fileId: string): StoredFile {
+  const { db, svc, dataDir } = deps;
+  fileTables(db);
+  const r = db.prepare("SELECT * FROM files WHERE id = ?").get(fileId) as any;
+  if (!r) fail(`no file ${fileId}`);
+  if (r.message_id || !r.task_id) fail(`${r.name} is on a message, not on a task alone, so it stays`);
+  db.prepare("DELETE FROM files WHERE id = ?").run(r.id);
+  rmSync(join(filesDir(dataDir), r.id), { force: true });
+  svc.updateTask(r.task_id, {}); // the task changed: views showing its files refresh
+  return { id: r.id, name: r.name, size: r.size };
 }
 
 // ---------------------------------------------------------------- routes
