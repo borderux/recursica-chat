@@ -15,6 +15,7 @@ import { neverByName } from "./toolpolicy.ts";
 import { googleConfig, passwordSignIn, passwordRefusal, registerGoogleSignIn } from "./google.ts";
 import { handleTaken, registerProfile } from "./profile.ts";
 import { registerFiles } from "./files.ts";
+import { registerServiceAccounts } from "./serviceaccounts.ts";
 import { managedRefusal, managedSince } from "./managed.ts";
 import { DEACTIVATED, deactivatedIds, isDeactivated, registerDeactivation } from "./deactivate.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
@@ -206,6 +207,9 @@ export function buildApi(app: App): Hono<Env> {
     deleteCookie(c, "cc_session", { path: "/" });
     return c.json({ ok: true });
   });
+
+  // a program's service account has its own routes, /api/service/*, and never a session (serviceaccounts.ts)
+  registerServiceAccounts(api, db);
 
   // everything below needs a session
   api.use("/api/*", async (c, next) => {
