@@ -209,7 +209,7 @@ export function buildApi(app: App): Hono<Env> {
   });
 
   // a program's service account has its own routes, /api/service/*, and never a session (serviceaccounts.ts)
-  registerServiceAccounts(api, db);
+  registerServiceAccounts(api, db, (s) => app.driven.routes(s));
 
   // everything below needs a session
   api.use("/api/*", async (c, next) => {

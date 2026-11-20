@@ -112,6 +112,7 @@ export function createHttpServer(app: App): HttpServer {
   // websocket: push events to signed-in browsers, filtered to what each user may see
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
+    if (app.driven.upgrade(req, socket, head)) return; // /ws/service, a service's own socket (drivenagents.ts)
     if (!req.url?.startsWith("/ws")) return socket.destroy();
     // the socket shows everything the signed-in person can see, so it gets the same check
     if (refusal(req, true)) return socket.destroy();

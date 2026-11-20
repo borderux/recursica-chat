@@ -7,7 +7,14 @@
 //   sudo node server/src/cli.ts service-token <name>    a new token, printed once, to stdout only;
 //                                                        the old token stops working at once
 //   sudo node server/src/cli.ts service-revoke <name>   ends its token; service-token starts it again
-//   sudo node server/src/cli.ts service-list            names and dates, never a token (stdout)
+//   sudo node server/src/cli.ts service-list            names, agents and dates, never a token (stdout)
+//   sudo node server/src/cli.ts service-drive <name> <agent handle>   the service drives that agent
+//   sudo node server/src/cli.ts service-undrive <agent handle>        the agent answers for itself again
+//
+// An agent a service drives gets no message from anyone but that service: every message that would
+// wake it goes to the service instead, and the service decides what the agent is asked
+// (drivenagents.ts). An agent has at most one service. Revoking a service's token also stops it
+// driving its agents.
 //
 // - A service account is not a user: it has no row in users, can't sign in, isn't listed among
 //   people and can't be a chat's member.
@@ -45,6 +52,9 @@ export function serviceTables(db: DB): void {
     `CREATE TABLE IF NOT EXISTS service_accounts (
       id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, token_hash TEXT UNIQUE,
       created_at INTEGER NOT NULL, last_used_at INTEGER, revoked_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS service_agents (
+      agent_id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE, since INTEGER NOT NULL
     );`,
   );
 }
@@ -96,6 +106,41 @@ export function revokeService(db: DB, name: string): void {
   const s = serviceByName(db, name);
   if (!s) throw new Error(`no service ${name}`);
   db.prepare("UPDATE service_accounts SET token_hash = NULL, revoked_at = ? WHERE id = ?").run(now(), s.id);
+  db.prepare("DELETE FROM service_agents WHERE service_id = ?").run(s.id);
+}
+
+const agentByHandle = (db: DB, handle: string): { id: string; handle: string } | undefined =>
+  db.prepare("SELECT id, handle FROM agents WHERE handle = ? AND archived = 0").get(handle.replace(/^@/, "").toLowerCase()) as any;
+
+/** The service drives the agent from now on. */
+export function driveAgent(db: DB, name: string, handle: string): void {
+  const s = serviceByName(db, name);
+  if (!s) throw new Error(`no service ${name}`);
+  const a = agentByHandle(db, handle);
+  if (!a) throw new Error(`no agent @${handle.replace(/^@/, "")}`);
+  const other = db.prepare("SELECT service_id FROM service_agents WHERE agent_id = ?").get(a.id) as any;
+  if (other && other.service_id !== s.id) throw new Error(`@${a.handle} is driven by ${serviceById(db, other.service_id)?.name ?? "another service"}: undrive it first`);
+  db.prepare("INSERT OR IGNORE INTO service_agents(agent_id, service_id, since) VALUES(?,?,?)").run(a.id, s.id, now());
+}
+
+/** The agent answers for itself again. Returns false when no service drove it. */
+export function undriveAgent(db: DB, handle: string): boolean {
+  serviceTables(db);
+  const a = agentByHandle(db, handle);
+  if (!a) throw new Error(`no agent @${handle.replace(/^@/, "")}`);
+  return db.prepare("DELETE FROM service_agents WHERE agent_id = ?").run(a.id).changes > 0;
+}
+
+/** The id of the service that drives the agent, or undefined. */
+export function driverOf(db: DB, agentId: string): string | undefined {
+  return (db.prepare("SELECT service_id FROM service_agents WHERE agent_id = ?").get(agentId) as any)?.service_id;
+}
+
+/** The agents a service drives. */
+export function drivenAgents(db: DB, sid: string): { id: string; handle: string; name: string }[] {
+  return db
+    .prepare("SELECT a.id, a.handle, a.name FROM agents a JOIN service_agents s ON s.agent_id = a.id WHERE s.service_id = ? AND a.archived = 0 ORDER BY a.handle")
+    .all(sid) as any[];
 }
 
 /** The service a token belongs to, or undefined. */
@@ -136,19 +181,19 @@ export function registerServiceAccounts(api: Hono<any>, db: DB, extend?: (svcApi
   });
   api.get("/api/service/me", (c) => {
     const s = c.get("service") as ServiceAccount;
-    return c.json({ service: { name: s.name, createdAt: s.createdAt } });
+    return c.json({ service: { name: s.name, createdAt: s.createdAt, agents: drivenAgents(db, s.id).map((a) => a.handle) } });
   });
   extend?.(api);
   // any other /api/service/* path: not found here, rather than falling through to a person's routes
   api.all("/api/service/*", (c) => c.json({ error: "not found" }, 404));
 }
 
-export const SERVICE_COMMANDS = ["service-create", "service-token", "service-revoke", "service-list"];
+export const SERVICE_COMMANDS = ["service-create", "service-token", "service-revoke", "service-list", "service-drive", "service-undrive"];
 
 /** Runs a service-* command. Returns what goes to stdout (the token only) and to stderr. Throws with a message. */
 export function serviceCommand(db: DB, cmd: string, args: string[]): { stdout?: string; stderr?: string } {
   const one = () => {
-    if (args.length !== 1 || !args[0]) throw new Error(`usage: cli.ts ${cmd} <name>`);
+    if (args.length !== 1 || !args[0]) throw new Error(`usage: cli.ts ${cmd} <${cmd === "service-undrive" ? "agent handle" : "name"}>`);
     return args[0];
   };
   if (cmd === "service-create") {
@@ -163,12 +208,24 @@ export function serviceCommand(db: DB, cmd: string, args: string[]): { stdout?: 
   if (cmd === "service-revoke") {
     const name = one();
     revokeService(db, name);
-    return { stderr: `Ended the token of ${name}. A new one starts it again: cli.ts service-token ${name}` };
+    return { stderr: `Ended the token of ${name}, and it drives no agent now. A new token starts it again: cli.ts service-token ${name}` };
+  }
+  if (cmd === "service-drive") {
+    if (args.length !== 2 || !args[0] || !args[1]) throw new Error("usage: cli.ts service-drive <name> <agent handle>");
+    driveAgent(db, args[0], args[1]);
+    return { stderr: `${args[0]} drives @${args[1].replace(/^@/, "")}: every message that would wake it goes to ${args[0]}.` };
+  }
+  if (cmd === "service-undrive") {
+    const handle = one().replace(/^@/, "");
+    return { stderr: undriveAgent(db, handle) ? `@${handle} answers for itself again.` : `No service drove @${handle}.` };
   }
   if (cmd === "service-list") {
     if (args.length) throw new Error("usage: cli.ts service-list");
     const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 16).replace("T", " ") : "never");
-    const lines = listServices(db).map((s) => `${s.name}  token: ${s.hasToken ? "yes" : s.revokedAt ? "revoked" : "none"}  made: ${day(s.createdAt)}  last used: ${day(s.lastUsedAt)}`);
+    const lines = listServices(db).map((s) => {
+      const agents = drivenAgents(db, s.id).map((a) => "@" + a.handle).join(" ") || "none";
+      return `${s.name}  token: ${s.hasToken ? "yes" : s.revokedAt ? "revoked" : "none"}  agents: ${agents}  made: ${day(s.createdAt)}  last used: ${day(s.lastUsedAt)}`;
+    });
     return lines.length ? { stdout: lines.join("\n") } : { stderr: "No services." };
   }
   throw new Error(`unknown command ${cmd}`);
