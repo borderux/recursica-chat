@@ -121,3 +121,18 @@ test("a private instruction needs an agent and true or false; another service ca
     await s.close();
   }
 });
+
+test("a private instruction may come with no note: then nothing of it shows in the chat", async () => {
+  const s = await setup();
+  try {
+    const sent = await s.call("POST", `/api/service/chats/${s.group.id}/messages`, { agent: "designer", text: "!say Quietly", private: true });
+    assert.equal(sent.status, 200, JSON.stringify(sent.json));
+    assert.equal(sent.json.message, null);
+    const reply = await waitFor(() => s.events.find((e) => e.type === "service_reply")?.reply, "the reply");
+    assert.equal(reply.body, "Quietly");
+    assert.deepEqual(await chatMessages(s.owner, s.group.id), [], "the chat is empty");
+    assert.equal((await s.call("POST", `/api/service/chats/${s.group.id}/messages`, { agent: "designer", text: "!say Loudly" })).status, 400, "an instruction that isn't private still needs its note");
+  } finally {
+    await s.close();
+  }
+});

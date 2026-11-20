@@ -12,7 +12,8 @@
 // - An instruction marked private gets its reply back alone: the agent's reply goes to the service
 //   (service_replies, and a service_reply event on its socket) and to the agent's Watch view, never
 //   to the chat. The turn posts no chat_post progress line, and a failure is a Watch line, not an
-//   error card. People see only the service's note.
+//   error card. People see only the service's note, and a private instruction may have none, so a
+//   service that asks for many small replies leaves nothing in the chat.
 // - The service writes lines in the agent's Watch view (its activity), for the detail people don't
 //   need in the chat.
 // - The service attaches text files to a task for the agent, on the task alone and as the agent's
@@ -383,7 +384,8 @@ export class DrivenAgents {
         const chat = this.chatFor(s, c.req.param("id"));
         const b = await body(c);
         const note = String(b.note ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-        if (!note) throw new HttpRefusal(400, "a note for people is needed: one line");
+        // a private instruction may come with no note: then nothing of it shows in the chat
+        if (!note && b.private !== true) throw new HttpRefusal(400, "a note for people is needed: one line");
         let agent: { id: string; handle: string } | undefined;
         let text = "";
         if (b.agent !== undefined) {
@@ -395,9 +397,9 @@ export class DrivenAgents {
         } else if (b.text !== undefined) throw new HttpRefusal(400, "text goes to an agent: name the agent");
         if (b.private !== undefined && typeof b.private !== "boolean") throw new HttpRefusal(400, "private is true or false");
         if (b.private && !agent) throw new HttpRefusal(400, "a private instruction goes to an agent: name the agent");
-        const message = svc.insertMessage({ chatId: chat.id, authorType: "system", authorId: s.id, kind: "service", body: note, meta: { service: s.name, agent: agent?.handle ?? "" } });
+        const message = note ? svc.insertMessage({ chatId: chat.id, authorType: "system", authorId: s.id, kind: "service", body: note, meta: { service: s.name, agent: agent?.handle ?? "" } }) : null;
         const delivery = agent
-          ? svc.deliver({ agentId: agent.id, chatId: chat.id, fromType: "service", fromId: s.id, text, hop: 0, goalId: String(b.goalId ?? "") || id("goal_"), sourceMessageId: message.id })
+          ? svc.deliver({ agentId: agent.id, chatId: chat.id, fromType: "service", fromId: s.id, text, hop: 0, goalId: String(b.goalId ?? "") || id("goal_"), sourceMessageId: message?.id })
           : null;
         // the turn reads this after it starts, which is always later than this line
         if (delivery && b.private) db.prepare("INSERT INTO service_instructions(delivery_id, service_id, private, created_at) VALUES(?,?,1,?)").run(delivery.id, s.id, now());
