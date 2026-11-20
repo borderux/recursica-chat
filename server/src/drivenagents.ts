@@ -11,13 +11,16 @@
 //   agent. A note alone wakes nobody.
 // - The service writes lines in the agent's Watch view (its activity), for the detail people don't
 //   need in the chat.
+// - The service attaches text files to a task for the agent, on the task alone and as the agent's
+//   own, with attach_files's names, types and limits (files.ts's attachTaskText).
 // - A request nobody has picked up after two minutes gets one note in its chat, so people know the
 //   agent isn't ignoring them.
 //
 // The service sees only the chats its agents are in, worked out on each request: take an agent out
 // of a chat and the service loses that chat at once. In those chats it reads messages, tasks and
-// files, changes tasks, and posts notes and messages to its agents. It never sees the people list,
-// emails, other chats, settings or memories, and never decides an approval.
+// files, changes tasks, attaches text files to tasks for its agents, and posts notes and messages to
+// its agents. It never sees the people list, emails, other chats, settings or memories, and never
+// decides an approval.
 //
 // The routes are /api/service/* (with serviceaccounts.ts's checks), and its live events come on
 // /ws/service: its requests, and the chat events of its chats, filtered like a person's
@@ -33,7 +36,7 @@ import { now } from "./db.ts";
 import { id } from "./crypto.ts";
 import { personHandle } from "./profile.ts";
 import { eventVisible, statusSeenBy } from "./eventfilter.ts";
-import { fileJson, fileDownload } from "./files.ts";
+import { attachTaskText, fileJson, fileDownload, FileRefusal } from "./files.ts";
 import { driverOf, drivenAgents, serviceById, serviceForToken, serviceRequest, serviceTables, type ServiceAccount } from "./serviceaccounts.ts";
 
 export const NOTE_AFTER_MS = 2 * 60_000;
@@ -299,6 +302,31 @@ export class DrivenAgents {
           ? svc.deliver({ agentId: agent.id, chatId: chat.id, fromType: "service", fromId: s.id, text, hop: 0, goalId: String(b.goalId ?? "") || id("goal_"), sourceMessageId: message.id })
           : null;
         return c.json({ message, delivery });
+      }),
+    );
+
+    // a text file on a task, for the agent: on the task alone, as the agent's own, so the agent can
+    // bundle it with its own files later; with the same names, types and limits as attach_files
+    api.post(
+      "/api/service/agents/:handle/files",
+      handled(async (c) => {
+        const s = me(c);
+        const a = this.agentFor(s, c.req.param("handle"));
+        const b = await body(c);
+        const t = svc.task(String(b.task ?? ""));
+        if (!t || !this.chatIds(s.id).has(t.chatId)) throw new HttpRefusal(404, "no such task");
+        if (!svc.isMember(t.chatId, "agent", a.id)) throw new HttpRefusal(409, `@${a.handle} isn't in that task's chat`);
+        if (typeof b.text !== "string") throw new HttpRefusal(400, "text is missing: the file's text, as a string");
+        let stored;
+        try {
+          stored = attachTaskText({ db, svc, dataDir: this.app.cfg.dataDir }, { chatId: t.chatId, taskId: t.id, agentId: a.id, name: b.name, text: b.text, markdown: b.markdown === true });
+        } catch (e) {
+          if (e instanceof FileRefusal) throw new HttpRefusal(400, e.message);
+          throw e;
+        }
+        const ids = stored.map((f) => f.id);
+        const rows = ids.map((fid) => db.prepare("SELECT * FROM files WHERE id = ?").get(fid));
+        return c.json({ files: rows.map(fileJson) });
       }),
     );
 

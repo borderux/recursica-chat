@@ -19,6 +19,8 @@
 //   written in parts, each part checked, and joined without being written out again.
 // - `task_only` attaches the files to the task alone, with no message in the chat: the parts of a
 //   document, say, that would crowd the chat. Such a file's message id is empty.
+// - attachTaskText does the same for a service that drives the agent: one text file, and its .md
+//   copy, on a task alone, as the agent's own, with the same checks.
 // - `markdown` on a .txt file also saves a .md copy with light formatting the server adds: the first
 //   paragraph as a heading, and each speaker line's name in bold.
 // - A download needs a session and a person who can see the chat. It is always served as an
@@ -109,8 +111,10 @@ COMMIT;`);
   ready.add(db);
 }
 
+/** A file refused for what it is: its name, type, size, or the space left. The message says why. */
+export class FileRefusal extends Error {}
 const fail = (msg: string): never => {
-  throw new Error(msg);
+  throw new FileRefusal(msg);
 };
 const ext = (name: string) => (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? "").toLowerCase();
 
@@ -466,9 +470,7 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
       const total = out.reduce((n, it) => n + it.data.length, 0);
       if (out.some((it) => it.data.length > LIMITS.fileBytes)) fail(`a file is over ${LIMITS.fileBytes / 1024 / 1024} MB`);
       if (total > LIMITS.messageBytes) fail(`the files come to more than ${LIMITS.messageBytes / 1024 / 1024} MB`);
-      const cap = Number(getSetting(db, "files_max_bytes")) || LIMITS.workspaceBytes;
-      const used = (db.prepare("SELECT COALESCE(SUM(size), 0) AS n FROM files").get() as any).n as number;
-      if (used + total > cap) fail("the workspace's file space is full. Ask an admin.");
+      ensureSpace(db, total);
       // unique names within the message
       const names = new Set<string>();
       for (const it of out) {
@@ -500,6 +502,43 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
       return `Attached ${stored.map((f) => `${f.name} (${f.id})`).join(", ")}${taskId ? ` to the message and the task` : ""}.`;
     },
   };
+}
+
+/** Refuses files that would take the workspace past its file space (the files_max_bytes setting). */
+function ensureSpace(db: DB, bytes: number): void {
+  const cap = Number(getSetting(db, "files_max_bytes")) || LIMITS.workspaceBytes;
+  const used = (db.prepare("SELECT COALESCE(SUM(size), 0) AS n FROM files").get() as any).n as number;
+  if (used + bytes > cap) fail("the workspace's file space is full. Ask an admin.");
+}
+
+/**
+ * Attaches a text file to a task alone, with no message, as an agent's own, as attach_files does with
+ * task_only: the same names, text types and limits, and with `markdown`, a .md copy of a .txt file.
+ * For a service that drives the agent (drivenagents.ts). The caller checks the task and the agent.
+ * Throws FileRefusal for a file that can't be attached.
+ */
+export function attachTaskText(deps: { db: DB; svc: Services; dataDir: string }, a: { chatId: string; taskId: string; agentId: string; name: unknown; text: string; markdown?: boolean }): StoredFile[] {
+  const { db, svc, dataDir } = deps;
+  fileTables(db);
+  const name = safeName(a.name);
+  if (!TEXT_TYPES.has(ext(name))) fail(`${name}: text goes in a .txt, .md, .csv or .json file`);
+  const items: Item[] = [{ name, data: Buffer.from(a.text, "utf8") }];
+  if (a.markdown) {
+    if (ext(name) !== "txt") fail(`${name}: markdown makes a copy of a .txt file only`);
+    items.push({ name: name.replace(/\.txt$/i, ".md"), data: Buffer.from(transcriptMarkdown(a.text), "utf8") });
+  }
+  if (items.some((it) => it.data.length > LIMITS.fileBytes)) fail(`${name} is over ${LIMITS.fileBytes / 1024 / 1024} MB`);
+  const total = items.reduce((n, it) => n + it.data.length, 0);
+  if (total > LIMITS.messageBytes) fail(`the files come to more than ${LIMITS.messageBytes / 1024 / 1024} MB`);
+  ensureSpace(db, total);
+  const ins = db.prepare("INSERT INTO files(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at) VALUES(?,?,?,?,?,?,?,?,?)");
+  const stored = items.map((it) => {
+    const b = storeBlob(dataDir, it.data);
+    ins.run(b.id, a.chatId, null, a.taskId, a.agentId, it.name, it.data.length, b.sha256, now());
+    return { id: b.id, name: it.name, size: it.data.length };
+  });
+  svc.updateTask(a.taskId, {}); // the task changed: views showing its files refresh
+  return stored;
 }
 
 // ---------------------------------------------------------------- routes
