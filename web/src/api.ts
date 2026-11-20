@@ -102,6 +102,8 @@ export interface Chat {
   members: Member[];
   last?: Message | null;
   unread?: number;
+  /** When it was archived, or null: an archived chat leaves the lists and is read-only. */
+  archivedAt?: number | null;
 }
 export interface Approval {
   id: string;
@@ -124,11 +126,13 @@ export interface Task {
   title: string;
   assigneeType: string;
   assigneeId: string;
-  status: "todo" | "working" | "needs_you" | "checking" | "done";
+  status: "todo" | "working" | "needs_you" | "checking" | "done" | "cancelled";
   planId: string;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  /** When it was archived, or null: an archived task leaves the lists, under the Archived filter. */
+  archivedAt?: number | null;
 }
 export interface Memory {
   id: string;

@@ -92,6 +92,10 @@ export function rowToDelivery(r: any): Delivery {
 /** Called whenever a delivery is queued, so the runtime can wake the agent. */
 export type DeliveryListener = (d: Delivery) => void;
 
+/** Which items a list holds: open ones, archived ones (archive.ts), or all. */
+export type Archived = "open" | "archived" | "all";
+const archivedSql = (alias: string, which: Archived) => (which === "open" ? ` AND ${alias}.archived_at IS NULL` : which === "archived" ? ` AND ${alias}.archived_at IS NOT NULL` : "");
+
 export class Services {
   private deliveryListeners: DeliveryListener[] = [];
   /** Takes a delivery for an agent that a service drives, in place of the agent (drivenagents.ts). */
@@ -129,7 +133,7 @@ export class Services {
     const c = this.db.prepare("SELECT * FROM chats WHERE id = ?").get(cid) as any;
     if (!c) return undefined;
     const members = this.db.prepare("SELECT member_type AS type, member_id AS id FROM chat_members WHERE chat_id = ?").all(cid);
-    return { id: c.id, kind: c.kind, name: c.name, createdAt: c.created_at, members };
+    return { id: c.id, kind: c.kind, name: c.name, createdAt: c.created_at, members, archivedAt: c.archived_at ?? null, archivedBy: c.archived_by ?? "" };
   }
   isMember(cid: string, type: "user" | "agent", mid: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM chat_members WHERE chat_id = ? AND member_type = ? AND member_id = ?").get(cid, type, mid);
@@ -149,11 +153,14 @@ export class Services {
         .all(cid) as any[]
     ).map(rowToAgent);
   }
-  /** The chats a user can see. Agent-only chats are readable by everyone in the workspace (transparency). */
-  chatsForUser(uid: string): any[] {
+  /**
+   * The chats a user can see. Agent-only chats are readable by everyone in the workspace (transparency).
+   * Open ones by default; archived ones (archive.ts) with "archived", or both with "all".
+   */
+  chatsForUser(uid: string, which: Archived = "open"): any[] {
     const rows = this.db
       .prepare(
-        `SELECT c.* FROM chats c WHERE c.kind = 'agents' OR EXISTS (SELECT 1 FROM chat_members m WHERE m.chat_id = c.id AND m.member_type = 'user' AND m.member_id = ?)
+        `SELECT c.* FROM chats c WHERE (c.kind = 'agents' OR EXISTS (SELECT 1 FROM chat_members m WHERE m.chat_id = c.id AND m.member_type = 'user' AND m.member_id = ?))${archivedSql("c", which)}
        ORDER BY COALESCE((SELECT MAX(ts) FROM messages WHERE chat_id = c.id), c.created_at) DESC`,
       )
       .all(uid) as any[];
@@ -480,13 +487,19 @@ export class Services {
         createdBy: r.created_by,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
+        archivedAt: r.archived_at ?? null,
+        archivedBy: r.archived_by ?? "",
       }
     );
   }
-  tasks(chatId?: string): any[] {
-    const rows = chatId
-      ? this.db.prepare("SELECT id FROM tasks WHERE chat_id = ? ORDER BY created_at").all(chatId)
-      : this.db.prepare("SELECT id FROM tasks ORDER BY created_at").all();
+  /**
+   * Tasks, in a chat or everywhere. Open ones by default: not archived, and not in an archived chat.
+   * "archived": the tasks archived themselves. "all": every one.
+   */
+  tasks(chatId?: string, which: Archived = "open"): any[] {
+    const where = which === "open" ? " AND t.archived_at IS NULL AND c.archived_at IS NULL" : which === "archived" ? " AND t.archived_at IS NOT NULL" : "";
+    const sql = `SELECT t.id FROM tasks t JOIN chats c ON c.id = t.chat_id WHERE ${chatId ? "t.chat_id = ?" : "1"}${where} ORDER BY t.created_at`;
+    const rows = chatId ? this.db.prepare(sql).all(chatId) : this.db.prepare(sql).all();
     return (rows as any[]).map((r) => this.task(r.id));
   }
   updateTask(tid: string, patch: { status?: string; title?: string; assigneeType?: string; assigneeId?: string }): any {

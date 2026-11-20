@@ -13,6 +13,7 @@
 //   need in the chat.
 // - The service attaches text files to a task for the agent, on the task alone and as the agent's
 //   own, with attach_files's names, types and limits (files.ts's attachTaskText).
+// - The service archives and restores the tasks of the agents it drives (archive.ts).
 // - A request nobody has picked up after two minutes gets one note in its chat, so people know the
 //   agent isn't ignoring them.
 //
@@ -37,6 +38,7 @@ import { id } from "./crypto.ts";
 import { personHandle } from "./profile.ts";
 import { eventVisible, statusSeenBy } from "./eventfilter.ts";
 import { attachTaskText, fileJson, fileDownload, FileRefusal } from "./files.ts";
+import { ArchiveRefusal, setArchived, TASK_STATUSES } from "./archive.ts";
 import { driverOf, drivenAgents, serviceById, serviceForToken, serviceRequest, serviceTables, type ServiceAccount } from "./serviceaccounts.ts";
 
 export const NOTE_AFTER_MS = 2 * 60_000;
@@ -246,7 +248,7 @@ export class DrivenAgents {
         const b = await body(c);
         const patch: { status?: string; title?: string; assigneeType?: string; assigneeId?: string } = {};
         if (b.status !== undefined) {
-          if (!["todo", "working", "needs_you", "checking", "done"].includes(String(b.status))) throw new HttpRefusal(400, "status is todo, working, needs_you, checking or done");
+          if (!TASK_STATUSES.includes(String(b.status))) throw new HttpRefusal(400, `status is ${TASK_STATUSES.join(", ")}`);
           patch.status = String(b.status);
         }
         if (b.title !== undefined) {
@@ -304,6 +306,25 @@ export class DrivenAgents {
         return c.json({ message, delivery });
       }),
     );
+
+    // archive or restore a task of an agent the service drives (archive.ts): it leaves every list, and stays
+    for (const action of ["archive", "restore"] as const)
+      api.post(
+        `/api/service/tasks/:id/${action}`,
+        handled((c) => {
+          const s = me(c);
+          const t = svc.task(c.req.param("id"));
+          if (!t || !this.chatIds(s.id).has(t.chatId)) throw new HttpRefusal(404, "no such task");
+          if (t.assigneeType !== "agent" || !drivenAgents(db, s.id).some((a) => a.id === t.assigneeId))
+            throw new HttpRefusal(403, `${s.name} may ${action} only the tasks of the agents it drives`);
+          try {
+            return c.json({ ok: true, changed: setArchived(this.app, "task", t.id, action === "archive", `service:${s.id}`) });
+          } catch (e) {
+            if (e instanceof ArchiveRefusal) throw new HttpRefusal(e.status, e.message);
+            throw e;
+          }
+        }),
+      );
 
     // a text file on a task, for the agent: on the task alone, as the agent's own, so the agent can
     // bundle it with its own files later; with the same names, types and limits as attach_files

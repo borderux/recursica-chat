@@ -20,6 +20,7 @@ import { toolDefault, neverByName, neverHttp } from "./toolpolicy.ts";
 import type { Services, Agent } from "./services.ts";
 import { personHandle } from "./profile.ts";
 import { serviceById } from "./serviceaccounts.ts";
+import { TASK_STATUSES } from "./archive.ts";
 
 export type Decision = "allow" | "ask" | "block" | "off";
 type Category = "core" | "read" | "write" | "danger";
@@ -383,8 +384,8 @@ export class Gateway {
       {
         name: "task_update",
         category: "core",
-        description: "Update a task: status todo | working | needs_you | checking | done.",
-        inputSchema: S({ id: str("task id"), status: { type: "string", enum: ["todo", "working", "needs_you", "checking", "done"] } }, ["id", "status"]),
+        description: "Update a task: status todo | working | needs_you | checking | done | cancelled.",
+        inputSchema: S({ id: str("task id"), status: { type: "string", enum: [...TASK_STATUSES] } }, ["id", "status"]),
         run: async (a) => {
           const t = svc.updateTask(String(a.id), { status: String(a.status) });
           return `Task "${t.title}" is now ${t.status}.`;
