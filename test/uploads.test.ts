@@ -7,7 +7,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startApp, setupOwner, mockAgent, Client, type Harness } from "./helpers.ts";
+import { WebSocket } from "ws";
+import { startApp, setupOwner, mockAgent, waitFor, Client, type Harness } from "./helpers.ts";
 import { dockerArgs, readOutput, sniff, UPLOAD, Uploads, type RunResult } from "../server/src/uploads.ts";
 import { serviceCommand } from "../server/src/serviceaccounts.ts";
 import { setSetting } from "../server/src/db.ts";
@@ -363,6 +364,47 @@ test("services: a request lists its message's files, and a file's text is read i
     assert.deepEqual(await get("/api/service/files/f_none/text"), { error: "no such file" });
     assert.ok(designer.id);
   } finally {
+    await h.close();
+  }
+});
+
+test("a service's live request lists the files a person sent with the message: a .md, a .txt and a PDF", async () => {
+  // The request reaches the service's socket while the message is posted. Each file must already be
+  // on the message then: a service that reads the request at once must never see it without its files.
+  const { h, a, group, token } = await setup();
+  const ws = new WebSocket(h.url.replace("http", "ws") + "/ws/service", { headers: { authorization: `Bearer ${token}` } });
+  const events: any[] = [];
+  ws.on("message", (d) => events.push(JSON.parse(String(d))));
+  try {
+    await new Promise((r, j) => {
+      ws.on("open", r);
+      ws.on("error", j);
+    });
+    await waitFor(() => events.find((e) => e.type === "hello"), "the service's hello");
+    const cases = [
+      { name: "notes.md", data: Buffer.from("# Notes\n\nA busy parent who plans on the train.\n"), text: "ok" },
+      { name: "brief.txt", data: Buffer.from("The study covers Sundays.\n"), text: "ok" },
+      { name: "paper.pdf", data: pdf("ok"), text: "pending" },
+    ];
+    for (const f of cases) {
+      const r = await upload(h, a, `/api/chats/${group.id}/files`, [{ name: f.name, data: f.data }], `@designer one interview, from ${f.name}`);
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      const req = await waitFor(() => events.find((e) => e.type === "service_request" && e.request.messageId === r.json.message.id)?.request, `the request for ${f.name}`);
+      assert.deepEqual(
+        req.files.map((x: any) => [x.id, x.name, x.text.state]),
+        [[r.json.files[0].id, f.name, f.text]],
+        `${f.name}: the live request lists the file`,
+      );
+    }
+    // the request a service lists later says the same, with the PDF's text read by now
+    await h.app.uploads.idle();
+    const listed = (await (await fetch(h.url + "/api/service/requests?state=pending,taken", { headers: { authorization: `Bearer ${token}` } })).json()) as any;
+    assert.deepEqual(
+      listed.requests.slice(-3).map((q: any) => q.files.map((x: any) => [x.name, x.text.state])),
+      [[["notes.md", "ok"]], [["brief.txt", "ok"]], [["paper.pdf", "ok"]]],
+    );
+  } finally {
+    ws.terminate();
     await h.close();
   }
 });

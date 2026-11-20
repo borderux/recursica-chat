@@ -260,6 +260,8 @@ export class Services {
     goalId?: string;
     /** What the agents it goes to get, when it isn't the body: the body and its attached files (uploads.ts). */
     agentText?: string;
+    /** Runs once the message is stored, before any agent or service hears of it: uploads.ts stores the message's files. */
+    stored?: (msg: Message) => void;
   }): Message {
     const msg = this.insertMessage({
       chatId: input.chatId,
@@ -269,6 +271,7 @@ export class Services {
       body: input.body,
       meta: input.meta ?? {},
     });
+    input.stored?.(msg);
     if (input.authorType === "system" || (input.kind && input.kind !== "text")) return msg;
     const chat = this.chat(input.chatId);
     if (!chat) return msg;
