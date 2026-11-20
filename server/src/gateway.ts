@@ -43,14 +43,14 @@ const filesNote = (meta: any) =>
 export interface CallContext {
   agent: Agent;
   chatId: string;
-  /** who asked for the current turn: a user id, an agent id, or a trigger */
-  requester: { type: string; id: string };
+  /** who asked for the current turn: a user id, an agent id, or a trigger; quiet when the reply goes to a service alone */
+  requester: { type: string; id: string; quiet?: boolean };
 }
 
 interface TokenInfo {
   agentId: string;
   chatId: string;
-  requester: { type: string; id: string };
+  requester: { type: string; id: string; quiet?: boolean };
   /** agent-wide token: chat + requester come from the agent's current turn */
   dynamic?: boolean;
 }
@@ -96,7 +96,7 @@ export class Gateway {
   /** set by the runtime: what the agent is working on right now */
   /** set by the runtime: show that an agent is waiting on a person */
   onWaiting: (agentId: string, waiting: boolean, detail: string) => void = () => {};
-  resolveContext: (agentId: string) => { chatId: string; requester: { type: string; id: string } } | undefined = () => undefined;
+  resolveContext: (agentId: string) => { chatId: string; requester: { type: string; id: string; quiet?: boolean } } | undefined = () => undefined;
 
   // ------------------------------------------------------------ tokens
   issueAgentToken(agentId: string): string {
@@ -113,7 +113,7 @@ export class Gateway {
     this.tokens.set(t, { agentId, chatId, requester });
     return t;
   }
-  updateRequester(t: string, requester: { type: string; id: string }): void {
+  updateRequester(t: string, requester: { type: string; id: string; quiet?: boolean }): void {
     const info = this.tokens.get(t);
     if (info) info.requester = requester;
   }
@@ -256,6 +256,8 @@ export class Gateway {
         description: "Post a short progress update in this chat now (your final answer is posted automatically).",
         inputSchema: S({ text: str("message") }, ["text"]),
         run: async (a, ctx) => {
+          // a turn whose reply goes to a service alone posts nothing to the chat (drivenagents.ts)
+          if (ctx.requester.quiet) return "not posted: this turn answers a service, and its reply goes to the service alone";
           svc.insertMessage({
             chatId: ctx.chatId,
             authorType: "agent",
