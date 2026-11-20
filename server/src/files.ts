@@ -20,7 +20,8 @@
 // - `task_only` attaches the files to the task alone, with no message in the chat: the parts of a
 //   document, say, that would crowd the chat. Such a file's message id is empty.
 // - attachTaskText does the same for a service that drives the agent: one text file, and its .md
-//   copy, on a task alone, as the agent's own, with the same checks. deleteTaskFile removes such a
+//   copy, on a task alone, as the agent's own, with the same checks. zipTaskFiles packs the agent's
+//   files of a plan into one zip on a task, the same way. deleteTaskFile removes such a
 //   file, on a task alone, for that service: a draft, say, once the finished file is there.
 // - `markdown` on a .txt file also saves a .md copy with light formatting the server adds: the first
 //   paragraph as a heading, and each speaker line's name in bold.
@@ -540,6 +541,43 @@ export function attachTaskText(deps: { db: DB; svc: Services; dataDir: string },
   });
   svc.updateTask(a.taskId, {}); // the task changed: views showing its files refresh
   return stored;
+}
+
+/**
+ * Packs files into one zip on a task alone, as an agent's own, as attach_files's zip does: for a
+ * service that drives the agent, bundling the agent's files of the task's plan, such as the finished
+ * transcripts of a set. Each file must be the agent's, in the task's chat, on the task or another task
+ * of its plan; the caller checks the task and the agent. Same names and limits as attach_files.
+ * Throws FileRefusal for a zip that can't be made.
+ */
+export function zipTaskFiles(deps: { db: DB; svc: Services; dataDir: string }, a: { chatId: string; taskId: string; agentId: string; name: unknown; include: unknown[] }): StoredFile {
+  const { db, svc, dataDir } = deps;
+  fileTables(db);
+  const name = safeName(a.name);
+  if (ext(name) !== "zip") fail(`${name}: a zip needs a name ending in .zip`);
+  const ids = (Array.isArray(a.include) ? a.include : []).map(String);
+  if (!ids.length) fail("include: the ids of the files to zip");
+  if (ids.length > LIMITS.zipEntries) fail(`a zip holds at most ${LIMITS.zipEntries} files`);
+  const planId = (db.prepare("SELECT plan_id FROM tasks WHERE id = ?").get(a.taskId) as any)?.plan_id ?? "";
+  const inPlan = (tid: string) => tid === a.taskId || (!!planId && (db.prepare("SELECT plan_id FROM tasks WHERE id = ?").get(tid) as any)?.plan_id === planId);
+  const items = ids.map((fid) => {
+    const r = db.prepare("SELECT id, name, agent_id, task_id, chat_id FROM files WHERE id = ?").get(fid) as any;
+    if (!r || r.agent_id !== a.agentId || r.chat_id !== a.chatId || !inPlan(r.task_id)) fail(`${fid} is not a file of the agent's in this task or its plan`);
+    return { name: r.name as string, data: readFileSync(join(filesDir(dataDir), r.id)) };
+  });
+  const used = new Map<string, number>();
+  const unique = items.map((it) => {
+    const n = used.get(it.name) ?? 0;
+    used.set(it.name, n + 1);
+    return { name: n ? it.name.replace(/(\.[^.]+)$/, ` (${n + 1})$1`) : it.name, data: it.data };
+  });
+  const data = makeZip(unique);
+  if (data.length > LIMITS.fileBytes) fail(`${name} is over ${LIMITS.fileBytes / 1024 / 1024} MB`);
+  ensureSpace(db, data.length);
+  const b = storeBlob(dataDir, data);
+  db.prepare("INSERT INTO files(id, chat_id, message_id, task_id, agent_id, name, size, sha256, created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(b.id, a.chatId, null, a.taskId, a.agentId, name, data.length, b.sha256, now());
+  svc.updateTask(a.taskId, {}); // the task changed: views showing its files refresh
+  return { id: b.id, name, size: data.length };
 }
 
 /**
