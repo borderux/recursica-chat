@@ -372,14 +372,15 @@ export class AgentWorker {
     }
   }
 
-  private async openSession(chatId: string, requester: { type: string; id: string }): Promise<SessionInfo> {
+  /** The chat's session, resumed or new; or, when `fresh`, a session of its own for one turn, never stored or resumed. */
+  private async openSession(chatId: string, requester: { type: string; id: string }, fresh = false): Promise<SessionInfo> {
     const a = this.agent();
     const conn = this.conn!;
     const tok = this.rt.gateway.issueToken(a.id, chatId, requester);
     const engineDef = engineById(a.engine);
     const mcp = engineDef?.sessionMcp === false ? [] : [this.rt.gateway.mcpServerEntry(tok, a.sandbox === "docker")];
     const cwd = a.sandbox === "docker" ? "/home/agent/work" : agentDirs(this.rt.opts.dataDir, a.id).work;
-    const stored = this.svc.db.prepare("SELECT engine_session_id FROM agent_sessions WHERE agent_id = ? AND scope = ?").get(a.id, chatId) as any;
+    const stored = fresh ? undefined : (this.svc.db.prepare("SELECT engine_session_id FROM agent_sessions WHERE agent_id = ? AND scope = ?").get(a.id, chatId) as any);
     let sessionId = "";
     let primed = false;
     if (stored && (await conn.loadSession(stored.engine_session_id, cwd, mcp))) {
@@ -388,6 +389,10 @@ export class AgentWorker {
       this.log({ kind: "lifecycle", text: "resumed earlier session" }, chatId);
     } else {
       sessionId = await conn.newSession(cwd, mcp);
+      if (fresh) {
+        this.log({ kind: "lifecycle", text: "a session of its own for this turn, with no history" }, chatId);
+        return { sessionId, token: tok, primed: false, lastSeenTs: now() };
+      }
       this.svc.db
         .prepare(
           "INSERT INTO agent_sessions(agent_id, scope, engine_session_id, updated_at) VALUES(?,?,?,?) ON CONFLICT DO UPDATE SET engine_session_id = excluded.engine_session_id, updated_at = excluded.updated_at",
@@ -454,9 +459,12 @@ export class AgentWorker {
       return;
     }
     const conn = this.conn!;
+    // a service's own instruction: its reply may go to the service alone, and the turn may run in a
+    // session of its own, with no history (drivenagents.ts)
+    const marked = this.svc.instruction?.(d.id) ?? null;
     let session: SessionInfo;
     try {
-      session = await this.sessionFor(d.chatId, d);
+      session = marked?.fresh ? await this.openSession(d.chatId, { type: d.fromType, id: d.fromId }, true) : await this.sessionFor(d.chatId, d);
     } catch (e) {
       this.svc.setDeliveryState(d.id, "failed", (e as Error).message);
       this.svc.insertMessage({
@@ -470,8 +478,7 @@ export class AgentWorker {
       return;
     }
     this.svc.setDeliveryState(d.id, "injected");
-    // a service's private instruction: the reply goes to the service alone, never to the chat
-    const quiet = this.svc.instruction?.(d.id)?.private === true;
+    const quiet = marked?.private === true;
     this.currentRequester = { type: d.fromType, id: d.fromId, ...(quiet ? { quiet } : {}) };
     // the session's tools read the requester from its token
     this.rt.gateway.updateRequester(session.token, this.currentRequester);
@@ -533,7 +540,7 @@ export class AgentWorker {
           });
         this.svc.setDeliveryState(d.id, "answered");
       }
-      this.svc.db.prepare("UPDATE agent_sessions SET updated_at = ? WHERE agent_id = ? AND scope = ?").run(now(), a.id, d.chatId);
+      if (!marked?.fresh) this.svc.db.prepare("UPDATE agent_sessions SET updated_at = ? WHERE agent_id = ? AND scope = ?").run(now(), a.id, d.chatId);
     } catch (e) {
       const msg = (e as Error).message;
       this.svc.setDeliveryState(d.id, "failed", msg);
@@ -551,6 +558,8 @@ export class AgentWorker {
       clearTimeout(timer);
       this.flushStream();
       this.replyBuf.delete(session.sessionId);
+      // a session of its own ends with its turn: its token stops working, and nothing keeps it
+      if (marked?.fresh) this.rt.gateway.revoke(session.token);
       this.activeSession = undefined;
       this.svc.bus.emitEvent({ type: "typing", chatId: d.chatId, agentId: a.id, on: false });
       if (this.conn && !this.conn.isClosed) this.setState("idle");
