@@ -8,6 +8,8 @@ import { WebSocket } from "ws";
 import { startApp, setupOwner, mockAgent, agentReply, waitFor, type Harness } from "./helpers.ts";
 import { serviceCommand } from "../server/src/serviceaccounts.ts";
 import { NOTE_AFTER_MS } from "../server/src/drivenagents.ts";
+import { LIMITS, transcriptMarkdown } from "../server/src/files.ts";
+import { setSetting } from "../server/src/db.ts";
 
 const svcCall = (h: Harness, t: string) => async (method: string, path: string, body?: unknown) => {
   const r = await fetch(h.url + path, {
@@ -203,6 +205,79 @@ test("a request nobody picks up gets one note in its chat; an undriven agent ans
     serviceCommand(h.app.db, "service-undrive", ["designer"]);
     const again = (await owner.post(`/api/chats/${dm.id}/messages`, { body: "!say back to normal" })).json.message;
     assert.equal((await agentReply(owner, dm.id, designer.id, again.ts - 1)).body, "back to normal");
+  } finally {
+    await h.close();
+  }
+});
+
+test("a service attaches a text file to a task for its agent: on the task alone, as the agent's own, with attach_files's limits", async () => {
+  const h = await startApp();
+  try {
+    const owner = await setupOwner(h);
+    const designer = await mockAgent(owner, "designer");
+    const editor = await mockAgent(owner, "editor");
+    const writer = await mockAgent(owner, "writer");
+    const db = h.app.db;
+    serviceCommand(db, "service-create", ["example-service"]);
+    serviceCommand(db, "service-drive", ["example-service", "designer"]);
+    serviceCommand(db, "service-drive", ["example-service", "editor"]);
+    const call = svcCall(h, serviceCommand(db, "service-token", ["example-service"]).stdout ?? "");
+    const group = (await owner.post("/api/chats", { name: "Group", agents: [designer.id, writer.id] })).json.chat;
+    const elsewhere = (await owner.post("/api/chats", { name: "Elsewhere", agents: [writer.id] })).json.chat;
+    const task = (await owner.post("/api/tasks", { chatId: group.id, title: "Interview 1 of 1 — A made-up gadget" })).json.task;
+    const hidden = (await owner.post("/api/tasks", { chatId: elsewhere.id, title: "Not the service's" })).json.task;
+    const before = (await owner.get(`/api/chats/${group.id}/messages`)).json.messages.length;
+
+    const text = "SYNTHETIC: made up for a test.\nA made-up gadget, interview 1 of 1\n\nResearcher  00:00:05\nTell me about the last time you used it.\n";
+    const r = await call("POST", "/api/service/agents/designer/files", { task: task.id, name: "gadget-interview-1-of-1.txt", text, markdown: true });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.deepEqual(
+      r.json.files.map((f: any) => [f.name, f.taskId, f.messageId, f.agentId, f.chatId]),
+      [
+        ["gadget-interview-1-of-1.txt", task.id, null, designer.id, group.id],
+        ["gadget-interview-1-of-1.md", task.id, null, designer.id, group.id],
+      ],
+      "on the task alone, as the agent's own",
+    );
+    assert.equal((await owner.get(`/api/chats/${group.id}/messages`)).json.messages.length, before, "no message in the chat");
+    const got = async (fid: string) => (await call("GET", `/api/service/files/${fid}`)).json;
+    assert.equal(await got(r.json.files[0].id), text, "the text, exactly");
+    assert.equal(await got(r.json.files[1].id), transcriptMarkdown(text), "and the server's .md copy");
+    assert.deepEqual((await call("GET", `/api/service/files?task=${task.id}`)).json.files.map((f: any) => f.name), ["gadget-interview-1-of-1.txt", "gadget-interview-1-of-1.md"]);
+
+    // the agent bundles them as its own
+    const zipped = await h.app.gateway.call(
+      "attach_files",
+      { include: r.json.files.map((f: any) => f.id), zip: "gadget-transcripts.zip", task: task.id },
+      { agent: h.app.svc.agent(designer.id)!, chatId: group.id, requester: { type: "user", id: "" } },
+    );
+    assert.equal(zipped.isError, false, zipped.text);
+
+    // only the service's agents, its chats, and an agent that is in the task's chat
+    const post = (handle: string, b: any) => call("POST", `/api/service/agents/${handle}/files`, b);
+    const ok = { task: task.id, name: "notes.txt", text: "x" };
+    assert.equal((await post("writer", ok)).status, 403, "an agent the service doesn't drive");
+    assert.equal((await post("designer", { ...ok, task: hidden.id })).status, 404, "a task in a chat the service doesn't see");
+    assert.equal((await post("designer", { ...ok, task: "t_none" })).status, 404);
+    const notIn = await post("editor", ok);
+    assert.equal(notIn.status, 409);
+    assert.match(notIn.json.error, /@editor isn't in that task's chat/);
+
+    // attach_files's names, types and limits
+    for (const [b, why] of [
+      [{ ...ok, text: undefined }, /text is missing/],
+      [{ ...ok, name: "notes.exe" }, /needs a name ending in/],
+      [{ ...ok, name: "bundle.zip" }, /text goes in a \.txt, \.md, \.csv or \.json file/],
+      [{ ...ok, name: "notes.md", markdown: true }, /markdown makes a copy of a \.txt file only/],
+      [{ ...ok, text: "x".repeat(LIMITS.fileBytes + 1) }, /notes\.txt is over 10 MB/],
+    ] as const) {
+      const res = await post("designer", b);
+      assert.equal(res.status, 400, JSON.stringify(b).slice(0, 80));
+      assert.match(res.json.error, why);
+    }
+    assert.equal((await post("designer", { ...ok, name: "../../etc/notes.txt" })).json.files[0].name, "notes.txt", "a safe base name");
+    setSetting(db, "files_max_bytes", "10");
+    assert.match((await post("designer", ok)).json.error, /file space is full/);
   } finally {
     await h.close();
   }
