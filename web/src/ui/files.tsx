@@ -1,29 +1,63 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Files an agent attached (server/src/files.ts): a download link each, never a preview. The server
-// sends every file as an attachment, so the browser saves the file and never shows or runs it.
+// Files on messages and tasks, an agent's (server/src/files.ts) or a person's upload
+// (server/src/uploads.ts): a download link each, never a preview. The server sends every file as an
+// attachment, so the browser saves the file and never shows or runs it. An upload shows whether its
+// text could be read, and the uploader or an admin may delete it.
 import { useEffect, useState } from "react";
 import { api } from "../api.ts";
-import { useBus } from "../store.tsx";
+import { useBus, useStore } from "../store.tsx";
+import { Icon } from "./ui.tsx";
 
 export interface FileRef {
   id: string;
   name: string;
   size: number;
   taskId?: string;
+  /** The person who uploaded it; empty for an agent's file. */
+  userId?: string;
+  /** The text's state: on a message, a word; from the list, an object with the reason. */
+  text?: "pending" | "ok" | "failed" | { state: "pending" | "ok" | "failed"; reason: string };
+  reason?: string;
 }
+/** The accept list for the upload pickers. The server checks each file's bytes, whatever this says. */
+export const UPLOAD_ACCEPT = ".pdf,.txt,.md,application/pdf,text/plain,text/markdown";
 
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 export function FileChips({ files }: { files?: FileRef[] }) {
+  const { me, isAdmin, fail, toast } = useStore();
   if (!Array.isArray(files) || !files.length) return null;
+  const remove = (f: FileRef) =>
+    api
+      .del(`/api/files/${encodeURIComponent(f.id)}`)
+      .then(() => toast(`Deleted ${f.name}`))
+      .catch(fail);
   return (
     <div className="file-chips">
-      {files.map((f) => (
-        <a key={f.id} className="file-chip" href={`/api/files/${encodeURIComponent(f.id)}`} download={f.name} rel="noopener">
-          <span className="file-name">{f.name}</span>
-          <span className="file-size">{size(f.size)}</span>
-        </a>
-      ))}
+      {files.map((f) => {
+        const state = typeof f.text === "object" ? f.text.state : f.text;
+        const reason = typeof f.text === "object" ? f.text.reason : (f.reason ?? "");
+        const mine = !!f.userId && (f.userId === me.id || isAdmin);
+        return (
+          <span key={f.id} className="file-chip-wrap">
+            <a className="file-chip" href={`/api/files/${encodeURIComponent(f.id)}`} download={f.name} rel="noopener">
+              <span className="file-name">{f.name}</span>
+              <span className="file-size">{size(f.size)}</span>
+            </a>
+            {state === "pending" && <span className="small muted">reading the text…</span>}
+            {state === "failed" && (
+              <span className="small" style={{ color: "var(--blocked)" }} title={reason}>
+                Couldn't read the text{reason ? `: ${reason}` : ""}. Attach a text version.
+              </span>
+            )}
+            {mine && (
+              <button className="btn icon ghost sm" aria-label={`Delete ${f.name}`} title="Delete this upload" onClick={() => remove(f)}>
+                <Icon n="x" size="sm" />
+              </button>
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }

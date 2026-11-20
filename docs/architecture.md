@@ -75,6 +75,7 @@ flowchart LR
 | Hosting | `server/src/hosting.ts` | Proxy trust, the seed file, export, erase, the Docker bridge address, hosted sign-in. |
 | People | `server/src/deactivate.ts` | Deactivating and reactivating a person: no sign-in by any way, sessions ended at once, messages kept. |
 | Files | `server/src/files.ts` | `attach_files`, the server's copy of each attached file, the download route. |
+| Uploads | `server/src/uploads.ts` | People's PDF, `.txt` and `.md` uploads, the PDF text reader's container, `read_file`, deleting an upload. |
 | CLI | `server/src/cli.ts` | `export`, `backup`, `state`, `set-password-hash`, and the root-only `session` and `end-sessions` (`clisession.ts`), `set-provider` and `provider-key-hash` (`cliprovider.ts`), `manage`, `unmanage`, `agent-get`, `agent-set` and `agent-models` (`managed.ts`). |
 | Crypto | `server/src/crypto.ts` | scrypt passwords, the AES-256-GCM vault, ids, HMAC. |
 | Web app | `web/` | React and Vite. Talks to the API and the websocket. |

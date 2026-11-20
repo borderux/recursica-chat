@@ -6,7 +6,7 @@ import { api, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { AgentAv, Empty, Filters, Icon, UserAv, WorkingMark } from "../ui/ui.tsx";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
-import { FileChips, useTaskFiles } from "../ui/files.tsx";
+import { FileChips, UPLOAD_ACCEPT, useTaskFiles } from "../ui/files.tsx";
 
 const SECTIONS: [string, Task["status"][]][] = [
   ["Needs you", ["needs_you"]],
@@ -189,6 +189,21 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                               </button>
                             </span>
                             <FileChips files={taskFiles[t.id]} />
+                            <label className="btn sm ghost" style={{ cursor: "pointer" }} title="Attach a PDF, .txt or .md file to this task">
+                              <Icon n="file" size="sm" />
+                              Attach
+                              <input
+                                type="file"
+                                multiple
+                                accept={UPLOAD_ACCEPT}
+                                hidden
+                                onChange={(e) => {
+                                  const picked = Array.from(e.target.files ?? []);
+                                  e.target.value = "";
+                                  if (picked.length) api.upload(`/api/tasks/${t.id}/files`, picked).catch(fail);
+                                }}
+                              />
+                            </label>
                           </li>
                         ))}
                       </ul>

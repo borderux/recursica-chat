@@ -31,7 +31,28 @@ async function call<T = any>(method: string, path: string, body?: unknown): Prom
   return data as T;
 }
 
+/** Files as a multipart body, with an optional message: people's uploads (server/src/uploads.ts). */
+async function send<T = any>(path: string, files: File[], body?: string): Promise<T> {
+  const form = new FormData();
+  if (body !== undefined) form.append("body", body);
+  for (const f of files) form.append("file", f, f.name);
+  const res = await fetch(path, { method: "POST", credentials: "same-origin", body: form });
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const msg = (data && data.error) || `Something went wrong (${res.status})`;
+    if (res.status === 401) window.dispatchEvent(new CustomEvent("cc:signedout"));
+    throw new ApiError(res.status, msg.charAt(0).toUpperCase() + msg.slice(1));
+  }
+  return data as T;
+}
+
 export const api = {
+  upload: send,
   get: <T = any>(p: string) => call<T>("GET", p),
   post: <T = any>(p: string, b: unknown = {}) => call<T>("POST", p, b),
   put: <T = any>(p: string, b: unknown = {}) => call<T>("PUT", p, b),

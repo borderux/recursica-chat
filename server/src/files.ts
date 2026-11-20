@@ -310,7 +310,7 @@ export function transcriptMarkdown(text: string): string {
 // ---------------------------------------------------------------- storage
 export const filesDir = (dataDir: string) => join(dataDir, "files");
 
-function storeBlob(dataDir: string, data: Buffer): { id: string; sha256: string } {
+export function storeBlob(dataDir: string, data: Buffer): { id: string; sha256: string } {
   const dir = filesDir(dataDir);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const fid = id("f_");
@@ -507,7 +507,7 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
 }
 
 /** Refuses files that would take the workspace past its file space (the files_max_bytes setting). */
-function ensureSpace(db: DB, bytes: number): void {
+export function ensureSpace(db: DB, bytes: number): void {
   const cap = Number(getSetting(db, "files_max_bytes")) || LIMITS.workspaceBytes;
   const used = (db.prepare("SELECT COALESCE(SUM(size), 0) AS n FROM files").get() as any).n as number;
   if (used + bytes > cap) fail("the workspace's file space is full. Ask an admin.");
@@ -610,6 +610,9 @@ export function fileJson(r: any) {
     taskId: r.task_id,
     agentId: r.agent_id,
     createdAt: r.created_at,
+    // a person's upload, and its text's state (uploads.ts), when there is one
+    userId: r.user_id ?? "",
+    ...(r.text_state ? { text: { state: r.text_state, reason: r.text_reason ?? "", pages: r.text_pages ?? null } } : {}),
   };
 }
 
@@ -638,11 +641,10 @@ export function registerFiles(api: Hono<any>, db: DB, dataDir: string, sees: (us
   api.get("/api/files", (c) => {
     const task = c.req.query("task");
     const chat = c.req.query("chat");
-    const rows = task
-      ? db.prepare("SELECT * FROM files WHERE task_id = ? ORDER BY created_at").all(task)
-      : chat
-        ? db.prepare("SELECT * FROM files WHERE chat_id = ? ORDER BY created_at").all(chat)
-        : db.prepare("SELECT * FROM files WHERE task_id != '' ORDER BY created_at").all();
+    // with each upload's text state (uploads.ts)
+    const sql = (where: string) =>
+      `SELECT f.*, t.state AS text_state, t.reason AS text_reason, t.pages AS text_pages FROM files f LEFT JOIN file_texts t ON t.file_id = f.id WHERE ${where} ORDER BY f.created_at`;
+    const rows = task ? db.prepare(sql("f.task_id = ?")).all(task) : chat ? db.prepare(sql("f.chat_id = ?")).all(chat) : db.prepare(sql("f.task_id != ''")).all();
     return c.json({ files: visible(c, rows as any[]).map(out) });
   });
 

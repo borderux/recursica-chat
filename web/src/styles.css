@@ -460,3 +460,4 @@ mark { background: #FFF1B8; border-radius: 3px; color: inherit; }
 .file-chip:hover { border-color: currentColor; }
 .file-chip .file-size { opacity: 0.6; font-size: 12px; }
 li > .file-chips { flex-basis: 100%; margin: 6px 0 0 34px; }
+.file-chip-wrap { display: inline-flex; align-items: center; gap: 6px; }

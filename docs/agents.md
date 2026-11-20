@@ -81,6 +81,7 @@ The gateway gives every agent these CircleChat tools. They are always allowed.
 | `task_create` | Add a task to this chat. |
 | `task_update` | Set a task to `todo`, `working`, `needs_you`, `checking` or `done`. |
 | `attach_files` | Attach files to a message in this chat, and to a task. See [Attached files](#attached-files). |
+| `read_file` | Read the text of a file in a chat the agent is in: a PDF, `.txt` or `.md` a person uploaded, or an agent's text file. See [People's uploads](#peoples-uploads). |
 
 Connected apps and MCP servers add more tools where they are granted.
 
@@ -94,6 +95,18 @@ Connected apps and MCP servers add more tools where they are granted.
 - **Limits:** 10 MB a file, 20 files and 25 MB a message, and 1 GB for the workspace (the `files_max_bytes` setting). The types are `.txt`, `.md`, `.csv`, `.json`, `.pdf`, `.png`, `.jpg` and `.zip`. A zip from the work folder is read and never unpacked: every entry must be an allowed type, with no links, no folders above, no encryption, at most 50 entries and at most 50 MB unpacked.
 - **Downloads need a session and access to the chat.** `GET /api/files/:id` always answers as an attachment, as `application/octet-stream`, with `nosniff` and a sandbox policy, so a browser saves the file and never shows or runs it.
 - **Writing text needs no approval.** The server writes the file, so an agent set to ask first attaches a file it wrote as text without a person's approval. A file the agent writes in its container first needs the approval its autonomy asks for.
+
+### People's uploads
+
+People attach PDF, `.txt` and `.md` files to a message, from the paperclip in the message box, or to a task, from the Tasks screen (`server/src/uploads.ts`).
+
+- **Who:** a person in the chat, as with posting, and never in an archived chat. Everyone who sees the chat sees the files. The uploader may delete their own uploads, and an admin any upload.
+- **Limits:** 10 MB a file, 10 files and 25 MB a message, 50 uploads a task, and the workspace's file space.
+- **A file is what its bytes say, never its name.** A `.pdf` must start with `%PDF-` and end with `%%EOF`, and a `.txt` or `.md` must be UTF-8 with no NUL byte. A name that doesn't match its bytes is refused.
+- **Storage, backups and downloads** are as for `attach_files`. The text is kept in the `file_texts` table, so backups and the export carry it.
+- **Agents read the text with `read_file`,** 100,000 characters at a time. A message with files tells the agents it goes to which files are attached, by id. A service reads the text at `GET /api/service/files/:id/text`, and each request lists the files on its message.
+- **A PDF's text is read after the upload, never in the server.** One PDF at a time runs in a container from the `images/pdftext` image: poppler-utils from Alpine, on the official Alpine image pinned by digest. The container has no network, 256 MB of memory, one CPU, a read-only file system, no capabilities, an unprivileged user and 30 seconds. It reads the first 300 pages, and keeps at most 2 MB of text. `CIRCLECHAT_PDF_IMAGE` names the image, best by the image ID recorded when it was built.
+- **A PDF that can't be read keeps its file,** with the reason: it took too long, it is encrypted, it is damaged, it has no text in it (a scan, say), or the reader isn't available. There is no OCR. People see the reason on the file, and `read_file` tells the agent to ask for a text version.
 
 ## Memory
 
