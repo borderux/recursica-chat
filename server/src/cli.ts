@@ -12,6 +12,7 @@
 //   node server/src/cli.ts agent-get <handle>             root only: a managed agent's settings as JSON
 //   node server/src/cli.ts agent-set <handle> [--check]   root only: settings as JSON on stdin
 //   node server/src/cli.ts agent-models                   root only: each agent's handle and model
+//   node server/src/cli.ts service-create|service-token|service-revoke <name>, service-list   root only: a program's service account (serviceaccounts.ts)
 // Uses CIRCLECHAT_DATA like the server. Safe to run while the server is up (SQLite WAL).
 import { existsSync, readFileSync, mkdtempSync, mkdirSync, rmSync, cpSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -25,9 +26,10 @@ import { getSetting } from "./db.ts";
 import { asDataOwner, sessionArgs, memberSession, endSessions } from "./clisession.ts";
 import { providerArgs, setProvider, providerKeyHash } from "./cliprovider.ts";
 import { agentGet, agentModels, agentSet, manage, parseSettings } from "./managed.ts";
+import { SERVICE_COMMANDS, serviceCommand } from "./serviceaccounts.ts";
 
 const dataDir = resolve(process.env.CIRCLECHAT_DATA ?? join(REPO_ROOT, "data"));
-const ROOT_ONLY = new Set(["session", "end-sessions", "set-provider", "provider-key-hash", "manage", "unmanage", "agent-get", "agent-set", "agent-models"]);
+const ROOT_ONLY = new Set(["session", "end-sessions", "set-provider", "provider-key-hash", "manage", "unmanage", "agent-get", "agent-set", "agent-models", ...SERVICE_COMMANDS]);
 if (ROOT_ONLY.has(process.argv[2])) {
   const refused = asDataOwner(dataDir);
   if (refused) {
@@ -148,8 +150,17 @@ if (cmd === "export") {
     console.error((e as Error).message);
     process.exit(3);
   }
+} else if (SERVICE_COMMANDS.includes(cmd)) {
+  try {
+    const r = serviceCommand(app.db, cmd, process.argv.slice(3));
+    if (r.stderr) console.error(r.stderr);
+    if (r.stdout) process.stdout.write(r.stdout + "\n");
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(3);
+  }
 } else {
-  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id> | manage|unmanage|agent-get <handle> | agent-set <handle> [--check] | agent-models");
+  console.error("usage: cli.ts export | backup | state | set-password-hash <email> | session <email> [--minutes N] | end-sessions <email> | set-provider <id> --base-url <url> --models <a,b> | provider-key-hash <id> | manage|unmanage|agent-get <handle> | agent-set <handle> [--check] | agent-models | service-create|service-token|service-revoke <name> | service-list");
   process.exit(2);
 }
 app.db.close();
