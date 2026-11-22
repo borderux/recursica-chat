@@ -17,6 +17,7 @@ import { handleTaken, registerProfile } from "./profile.ts";
 import { registerFiles } from "./files.ts";
 import { registerServiceAccounts } from "./serviceaccounts.ts";
 import { managedRefusal, managedSince } from "./managed.ts";
+import { startersOf } from "./starters.ts";
 import { DEACTIVATED, deactivatedIds, isDeactivated, registerDeactivation } from "./deactivate.ts";
 import { inspectAgentFolder, copySkills } from "./importer.ts";
 import { slug } from "./gateway.ts";
@@ -288,7 +289,7 @@ export function buildApi(app: App): Hono<Env> {
     const u = tryGetContext<Env>()?.get("user");
     return statusSeenBy(app.runtime.statusOf(aid), (cid) => !!u && seesChat(u, cid));
   };
-  const agentOut = (a: any) => ({ ...a, status: statusFor(a.id), monthCostMicros: svc.monthCostMicros(a.id), managed: managedSince(db, a.id) !== null });
+  const agentOut = (a: any) => ({ ...a, status: statusFor(a.id), monthCostMicros: svc.monthCostMicros(a.id), managed: managedSince(db, a.id) !== null, starters: startersOf(db, a.id) });
   api.get("/api/agents", (c) => c.json({ agents: svc.agents().map(agentOut) }));
   api.get("/api/agents/:id", (c) => {
     const a = svc.agent(c.req.param("id"));

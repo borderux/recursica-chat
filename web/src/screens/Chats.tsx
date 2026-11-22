@@ -5,6 +5,7 @@ import { FileChips, UPLOAD_ACCEPT } from "../ui/files.tsx";
 import { api, type Agent, type Approval, type Chat, type Member, type Message, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
+import { placeholderIn, startersFor } from "../starters.ts";
 import {
   AgentAv,
   Cluster,
@@ -173,23 +174,22 @@ export function ChatsScreen({ chatId, info }: { chatId?: string; info?: boolean 
 }
 
 // ================================================================ first steps
-const IDEAS = [
-  "What can you do for our team?",
-  "Find the 3 best tools for running a small team and compare them",
-  "Plan a product launch for next Tuesday as a checklist",
-  "Write a short, friendly welcome email for new customers",
-];
-/** Shown until a person has written in the chat: one tap starts a real conversation. */
-function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
+/**
+ * Shown until a person has written in the chat: one tap starts a real conversation. The starters are
+ * the agent's own, or the generic ones (../starters.ts). One with a [placeholder] fills the message
+ * box for editing instead of sending.
+ */
+function StartHere({ chatId, agents, onFill }: { chatId: string; agents: Agent[]; onFill: (text: string) => void }) {
   const { go, fail } = useStore();
   const [busy, setBusy] = useState(false);
   const lead = agents[0];
   const ask = async (idea: string) => {
     if (busy) return;
+    // in a group with several agents, ask the first one by name
+    const body = agents.length > 1 ? `@${lead.handle} ${idea}` : idea;
+    if (placeholderIn(idea)) return onFill(body);
     setBusy(true);
     try {
-      // in a group with several agents, ask the first one by name
-      const body = agents.length > 1 ? `@${lead.handle} ${idea}` : idea;
       await api.post(`/api/chats/${chatId}/messages`, { body });
     } catch (e) {
       fail(e);
@@ -202,14 +202,14 @@ function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
         <AgentAv a={lead} size={56} dot={false} />
         <div>
           <div className="start-title">Try asking {lead.name}</div>
-          <div className="small muted">Tap one to send it, or write your own below.</div>
+          <div className="small muted">Tap one to send it, or to fill in its [blank] first. Or write your own below.</div>
         </div>
       </div>
       <div className="start-ideas">
-        {IDEAS.map((i) => (
-          <button key={i} className="start-idea" disabled={busy} onClick={() => ask(i)}>
+        {startersFor(lead).map((i) => (
+          <button key={i} className="start-idea" disabled={busy} onClick={() => ask(i)} title={placeholderIn(i) ? "Fill in the blank, then send" : "Send"}>
             {i}
-            <Icon n="send" size="sm" />
+            <Icon n={placeholderIn(i) ? "edit" : "send"} size="sm" />
           </button>
         ))}
       </div>
@@ -237,6 +237,8 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const readTimer = useRef<number | undefined>(undefined);
+  // a starter with a [placeholder], put in the message box for editing; n makes each tap a new fill
+  const [draft, setDraft] = useState<{ text: string; n: number } | null>(null);
 
   const markRead = useCallback(() => {
     clearTimeout(readTimer.current);
@@ -378,7 +380,7 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
           )}
           <Thread msgs={msgs} chat={chat} approvals={approvals} />
           {chat.kind !== "agents" && agentsHere.length > 0 && typing.size === 0 && !msgs.some((m) => m.authorType === "user") && (
-            <StartHere chatId={chat.id} agents={agentsHere} />
+            <StartHere chatId={chat.id} agents={agentsHere} onFill={(text) => setDraft((d) => ({ text, n: (d?.n ?? 0) + 1 }))} />
           )}
           {[...typing].map((id) => {
             const a = agent(id);
@@ -402,6 +404,7 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
           <Composer
             chat={chat}
             agents={agentsHere}
+            draft={draft}
             onOpenInfo={() => go(`/chats/${chatId}?info=1`)}
             placeholder={
               chat.kind === "agents"
@@ -720,7 +723,19 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
 // ---------------------------------------------------------------- composer
 // a person in the @ list: they're mentioned by username (server/src/profile.ts)
 type PersonPick = { person: string; handle: string };
-function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agents: Agent[]; placeholder: string; onOpenInfo: () => void }) {
+function Composer({
+  chat,
+  agents,
+  placeholder,
+  onOpenInfo,
+  draft,
+}: {
+  chat: Chat;
+  agents: Agent[];
+  placeholder: string;
+  onOpenInfo: () => void;
+  draft?: { text: string; n: number } | null;
+}) {
   const { fail, me, user, profiles } = useStore();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -744,6 +759,19 @@ function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agent
     warmedAt.current = 0;
     warm();
   }, [chat.id, warm]);
+  // a starter to fill in (StartHere): into the box, with its first [placeholder] selected to type over
+  useEffect(() => {
+    if (!draft) return;
+    setText(draft.text);
+    setMention(null);
+    requestAnimationFrame(() => {
+      const el = ta.current;
+      if (!el) return;
+      el.focus();
+      const at = placeholderIn(draft.text) ?? [draft.text.length, draft.text.length];
+      el.setSelectionRange(at[0], at[1]);
+    });
+  }, [draft]);
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;

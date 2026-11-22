@@ -7,6 +7,9 @@
 //   sudo node server/src/cli.ts agent-set <handle> [--check]  sets them from JSON on stdin
 //   sudo node server/src/cli.ts agent-models                  prints each agent's handle and model
 //
+// agent-set also takes "starters", the suggestions an empty chat with the agent shows (starters.ts).
+// The API returns them and changes them for no one, so they need no refusal.
+//
 // - Only root may run these, like `session` (clisession.ts).
 // - For a managed agent, the API refuses a change to any of MANAGED_FIELDS from every session, the
 //   owner's included, and the web app shows them read-only. The CLI is the one way to change them.
@@ -16,12 +19,15 @@
 import { createHash } from "node:crypto";
 import type { DB } from "./db.ts";
 import { now } from "./db.ts";
+import { parseStarters, setStarters, startersOf } from "./starters.ts";
 
 /** The settings a managed agent's repository owns, by their names in the API. */
 export const MANAGED_FIELDS = ["instructions", "model", "autonomy", "sandbox", "budgetCents"] as const;
 type Field = (typeof MANAGED_FIELDS)[number];
 const COLUMN: Record<Field, string> = { instructions: "instructions", model: "model", autonomy: "autonomy", sandbox: "sandbox", budgetCents: "budget_cents" };
 export const MAX_INSTRUCTIONS = 20_000;
+/** What agent-set takes: the managed fields, and the starters. */
+export type Settings = Partial<Record<Field, string | number>> & { starters?: string[] };
 
 const ready = new WeakSet<object>();
 export function managedTables(db: DB): void {
@@ -75,6 +81,7 @@ export function agentGet(db: DB, handle: string): Record<string, unknown> {
     budgetCents: a.budget_cents,
     instructionsSha256: sha(a.instructions),
     instructionsLength: a.instructions.length,
+    starters: startersOf(db, a.id),
   };
 }
 
@@ -84,7 +91,7 @@ export function agentModels(db: DB): string {
 }
 
 /** Checks the settings from stdin. Returns them by field, or throws with the reason. */
-export function parseSettings(text: string, providerIds: string[]): Partial<Record<Field, string | number>> {
+export function parseSettings(text: string, providerIds: string[]): Settings {
   let v: any;
   try {
     v = JSON.parse(text);
@@ -92,9 +99,9 @@ export function parseSettings(text: string, providerIds: string[]): Partial<Reco
     throw new Error("stdin must be a JSON object of settings");
   }
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("stdin must be a JSON object of settings");
-  const out: Partial<Record<Field, string | number>> = {};
+  const out: Settings = {};
   for (const k of Object.keys(v))
-    if (!(MANAGED_FIELDS as readonly string[]).includes(k)) throw new Error(`${k} is not a managed setting (${MANAGED_FIELDS.join(", ")})`);
+    if (k !== "starters" && !(MANAGED_FIELDS as readonly string[]).includes(k)) throw new Error(`${k} is not a managed setting (${[...MANAGED_FIELDS, "starters"].join(", ")})`);
   if (v.instructions !== undefined) {
     if (typeof v.instructions !== "string") throw new Error("instructions must be text");
     if (v.instructions.length > MAX_INSTRUCTIONS) throw new Error(`instructions are ${v.instructions.length} characters, over ${MAX_INSTRUCTIONS}`);
@@ -118,15 +125,17 @@ export function parseSettings(text: string, providerIds: string[]): Partial<Reco
     if (!Number.isInteger(v.budgetCents) || v.budgetCents < 0) throw new Error("budgetCents must be a whole number, 0 or more");
     out.budgetCents = v.budgetCents;
   }
+  if (v.starters !== undefined) out.starters = parseStarters(v.starters);
   return out;
 }
 
 /** Sets the fields that differ on a managed agent. Returns the names of the fields that changed. */
-export function agentSet(db: DB, handle: string, settings: Partial<Record<Field, string | number>>, { check = false } = {}): Field[] {
+export function agentSet(db: DB, handle: string, settings: Settings, { check = false } = {}): (Field | "starters")[] {
   const a = agentRow(db, handle);
   if (managedSince(db, a.id) === null) throw new Error(`@${a.handle} is not managed. Mark it first: cli.ts manage ${a.handle}`);
-  const changed = (Object.keys(settings) as Field[]).filter((f) => a[COLUMN[f]] !== settings[f]);
+  const { starters, ...fields } = settings;
+  const changed = (Object.keys(fields) as Field[]).filter((f) => a[COLUMN[f]] !== fields[f]);
   if (changed.length && !check)
-    db.prepare(`UPDATE agents SET ${changed.map((f) => `${COLUMN[f]} = ?`).join(", ")} WHERE id = ?`).run(...changed.map((f) => settings[f]!), a.id);
-  return changed;
+    db.prepare(`UPDATE agents SET ${changed.map((f) => `${COLUMN[f]} = ?`).join(", ")} WHERE id = ?`).run(...changed.map((f) => fields[f]!), a.id);
+  return starters !== undefined && setStarters(db, a.id, starters, { check }) ? [...changed, "starters"] : changed;
 }
