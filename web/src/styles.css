@@ -437,6 +437,17 @@ mark { background: #FFF1B8; border-radius: 3px; color: inherit; }
 .start-idea svg { flex: none; opacity: .55; }
 .start-more { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
 @media (max-width: 720px) { .start-ideas { grid-template-columns: 1fr; } }
+/* a starter with [placeholders]: its dialog (StarterDialog in screens/Chats.tsx) */
+.starter-dlg { display: grid; gap: 14px; }
+.starter-field .input { width: 100%; font-size: 16px; }
+.starter-preview { padding: 12px 14px; border-radius: 14px; background: var(--bg); line-height: 1.45; overflow-wrap: anywhere; }
+.starter-preview .small { margin-bottom: 4px; }
+.starter-preview .blank { color: var(--ink-3); background: var(--surface); border-radius: 6px; padding: 0 4px; }
+@media (max-width: 600px) {
+  .overlay:has(.starter-dlg) { padding: 0; place-items: end stretch; }
+  .overlay:has(.starter-dlg) .modal { width: 100% !important; border-radius: 18px 18px 0 0; max-height: 92vh; }
+  .overlay:has(.starter-dlg) .modal-f { flex-wrap: wrap; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+}
 
 /* hosted: AI credits running low (owners only) */
 .credit-note { position: fixed; top: 76px; right: 20px; z-index: 150; display: flex; align-items: center; gap: 12px; background: var(--ink); color: #fff; border-radius: 99px; padding: 8px 10px 8px 16px; font-size: 13.5px; box-shadow: var(--sh-2); }

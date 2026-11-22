@@ -5,7 +5,7 @@ import { FileChips, UPLOAD_ACCEPT } from "../ui/files.tsx";
 import { api, type Agent, type Approval, type Chat, type Member, type Message, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
-import { placeholderIn, startersFor } from "../starters.ts";
+import { allFilled, fillStarter, mentionsAttachment, placeholdersIn, previewParts, startersFor } from "../starters.ts";
 import {
   AgentAv,
   Cluster,
@@ -176,18 +176,20 @@ export function ChatsScreen({ chatId, info }: { chatId?: string; info?: boolean 
 // ================================================================ first steps
 /**
  * Shown until a person has written in the chat: one tap starts a real conversation. The starters are
- * the agent's own, or the generic ones (../starters.ts). One with a [placeholder] fills the message
- * box for editing instead of sending.
+ * the agent's own, or the generic ones (../starters.ts). A starter without [placeholders] sends at
+ * once; one with them opens StarterDialog to fill them in first.
  */
-function StartHere({ chatId, agents, onFill }: { chatId: string; agents: Agent[]; onFill: (text: string) => void }) {
+function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
   const { go, fail } = useStore();
   const [busy, setBusy] = useState(false);
+  const [filling, setFilling] = useState<string | null>(null);
   const lead = agents[0];
+  // in a group with several agents, ask the first one by name
+  const prefix = agents.length > 1 ? `@${lead.handle} ` : "";
   const ask = async (idea: string) => {
     if (busy) return;
-    // in a group with several agents, ask the first one by name
-    const body = agents.length > 1 ? `@${lead.handle} ${idea}` : idea;
-    if (placeholderIn(idea)) return onFill(body);
+    if (placeholdersIn(idea).length) return setFilling(idea);
+    const body = prefix + idea;
     setBusy(true);
     try {
       await api.post(`/api/chats/${chatId}/messages`, { body });
@@ -202,17 +204,18 @@ function StartHere({ chatId, agents, onFill }: { chatId: string; agents: Agent[]
         <AgentAv a={lead} size={56} dot={false} />
         <div>
           <div className="start-title">Try asking {lead.name}</div>
-          <div className="small muted">Tap one to send it, or to fill in its [blank] first. Or write your own below.</div>
+          <div className="small muted">Tap one to send it, or to fill in its blanks first. Or write your own below.</div>
         </div>
       </div>
       <div className="start-ideas">
         {startersFor(lead).map((i) => (
-          <button key={i} className="start-idea" disabled={busy} onClick={() => ask(i)} title={placeholderIn(i) ? "Fill in the blank, then send" : "Send"}>
+          <button key={i} className="start-idea" disabled={busy} onClick={() => ask(i)} title={placeholdersIn(i).length ? "Fill in the blanks, then send" : "Send"}>
             {i}
-            <Icon n={placeholderIn(i) ? "edit" : "send"} size="sm" />
+            <Icon n={placeholdersIn(i).length ? "edit" : "send"} size="sm" />
           </button>
         ))}
       </div>
+      {filling && <StarterDialog chatId={chatId} starter={filling} prefix={prefix} agentName={lead.name} onClose={() => setFilling(null)} />}
       <div className="start-more">
         <button className="btn sm ghost" onClick={() => go("/agents/new")}>
           <Icon n="plus" size="sm" /> Add another agent
@@ -222,6 +225,123 @@ function StartHere({ chatId, agents, onFill }: { chatId: string; agents: Agent[]
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * A starter with [placeholders]: one labeled field per placeholder, labeled with the placeholder's
+ * text, a live preview of the finished message, and Send once every field is filled. Enter moves to
+ * the next field, and in the last field sends. Cancel sends nothing. A starter that mentions an
+ * attachment ("the attached persona") also offers Attach.
+ */
+function StarterDialog({ chatId, starter, prefix, agentName, onClose }: { chatId: string; starter: string; prefix: string; agentName: string; onClose: () => void }) {
+  const { fail } = useStore();
+  const labels = useMemo(() => placeholdersIn(starter), [starter]);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const fields = useRef<(HTMLInputElement | null)[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
+  const attach = mentionsAttachment(starter);
+  const ready = allFilled(labels, values) && !busy;
+  const send = async () => {
+    if (!ready) return;
+    const body = prefix + fillStarter(starter, values);
+    setBusy(true);
+    try {
+      if (files.length) await api.upload(`/api/chats/${chatId}/files`, files, body);
+      else await api.post(`/api/chats/${chatId}/messages`, { body });
+      onClose();
+    } catch (e) {
+      fail(e);
+      setBusy(false);
+    }
+  };
+  const onKey = (k: number) => (e: RKE<HTMLInputElement>) => {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    if (k < labels.length - 1) fields.current[k + 1]?.focus();
+    else send();
+  };
+  return (
+    <Modal
+      title={`Ask ${agentName}`}
+      sub="Fill in the blanks, then send."
+      onClose={onClose}
+      width={520}
+      footer={
+        <>
+          {attach && (
+            <>
+              <input
+                ref={picker}
+                type="file"
+                multiple
+                accept={UPLOAD_ACCEPT}
+                hidden
+                data-testid="starter-files"
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  setFiles((l) => [...l, ...picked].slice(0, 10));
+                  e.target.value = "";
+                }}
+              />
+              <button className="btn ghost" onClick={() => picker.current?.click()} disabled={busy}>
+                <Icon n="file" size="sm" /> Attach
+              </button>
+            </>
+          )}
+          <div className="grow" />
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" onClick={send} disabled={!ready} data-testid="starter-send">
+            <Icon n="send" size="sm" /> Send
+          </button>
+        </>
+      }
+    >
+      <div className="starter-dlg">
+        {labels.map((l, k) => (
+          <div key={l} className="starter-field">
+            <label className="label" htmlFor={`starter-${k}`}>
+              {l[0].toUpperCase() + l.slice(1)}
+            </label>
+            <input
+              id={`starter-${k}`}
+              ref={(el) => {
+                fields.current[k] = el;
+              }}
+              className="input"
+              value={values[l] ?? ""}
+              autoFocus={k === 0}
+              enterKeyHint={k === labels.length - 1 ? "send" : "next"}
+              onChange={(e) => setValues((v) => ({ ...v, [l]: e.target.value }))}
+              onKeyDown={onKey(k)}
+            />
+          </div>
+        ))}
+        {attach && files.length > 0 && (
+          <div className="file-chips">
+            {files.map((f, k) => (
+              <span key={k} className="file-chip">
+                <span className="file-name">{f.name}</span>
+                <button className="btn icon ghost sm" aria-label={`Remove ${f.name}`} onClick={() => setFiles((l) => l.filter((_, j) => j !== k))}>
+                  <Icon n="x" size="sm" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="starter-preview" aria-live="polite">
+          <div className="small muted">Your message</div>
+          <div data-testid="starter-preview">
+            {prefix}
+            {previewParts(starter, values).map((p, k) => (p.blank ? <span key={k} className="blank">{p.text}</span> : <span key={k}>{p.text}</span>))}
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -237,8 +357,6 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const readTimer = useRef<number | undefined>(undefined);
-  // a starter with a [placeholder], put in the message box for editing; n makes each tap a new fill
-  const [draft, setDraft] = useState<{ text: string; n: number } | null>(null);
 
   const markRead = useCallback(() => {
     clearTimeout(readTimer.current);
@@ -380,7 +498,7 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
           )}
           <Thread msgs={msgs} chat={chat} approvals={approvals} />
           {chat.kind !== "agents" && agentsHere.length > 0 && typing.size === 0 && !msgs.some((m) => m.authorType === "user") && (
-            <StartHere chatId={chat.id} agents={agentsHere} onFill={(text) => setDraft((d) => ({ text, n: (d?.n ?? 0) + 1 }))} />
+            <StartHere chatId={chat.id} agents={agentsHere} />
           )}
           {[...typing].map((id) => {
             const a = agent(id);
@@ -404,7 +522,6 @@ function Conversation({ chatId, info }: { chatId: string; info: boolean }) {
           <Composer
             chat={chat}
             agents={agentsHere}
-            draft={draft}
             onOpenInfo={() => go(`/chats/${chatId}?info=1`)}
             placeholder={
               chat.kind === "agents"
@@ -723,19 +840,7 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
 // ---------------------------------------------------------------- composer
 // a person in the @ list: they're mentioned by username (server/src/profile.ts)
 type PersonPick = { person: string; handle: string };
-function Composer({
-  chat,
-  agents,
-  placeholder,
-  onOpenInfo,
-  draft,
-}: {
-  chat: Chat;
-  agents: Agent[];
-  placeholder: string;
-  onOpenInfo: () => void;
-  draft?: { text: string; n: number } | null;
-}) {
+function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agents: Agent[]; placeholder: string; onOpenInfo: () => void }) {
   const { fail, me, user, profiles } = useStore();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -759,19 +864,6 @@ function Composer({
     warmedAt.current = 0;
     warm();
   }, [chat.id, warm]);
-  // a starter to fill in (StartHere): into the box, with its first [placeholder] selected to type over
-  useEffect(() => {
-    if (!draft) return;
-    setText(draft.text);
-    setMention(null);
-    requestAnimationFrame(() => {
-      const el = ta.current;
-      if (!el) return;
-      el.focus();
-      const at = placeholderIn(draft.text) ?? [draft.text.length, draft.text.length];
-      el.setSelectionRange(at[0], at[1]);
-    });
-  }, [draft]);
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
