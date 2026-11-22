@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { startApp, setupOwner, mockAgent } from "./helpers.ts";
 import { agentGet, agentSet, manage, parseSettings } from "../server/src/managed.ts";
 import { MAX_STARTERS, parseStarters } from "../server/src/starters.ts";
-import { GENERIC_STARTERS, placeholderIn, startersFor } from "../web/src/starters.ts";
+import { GENERIC_STARTERS, allFilled, fillStarter, mentionsAttachment, placeholdersIn, previewParts, startersFor } from "../web/src/starters.ts";
 
 const STARTERS = [
   "Quick test: one short interview about a hobby",
@@ -61,23 +61,50 @@ test("agent-set sets a managed agent's starters only when they differ, agent-get
   }
 });
 
-test("the web app: an agent's own starters, else the generic ones; a [placeholder] fills the box instead of sending", () => {
+test("the web app: an agent's own starters, else the generic ones", () => {
   assert.deepEqual(startersFor({ starters: STARTERS }), STARTERS);
   assert.deepEqual(startersFor({ starters: [] }), GENERIC_STARTERS);
   assert.deepEqual(startersFor({}), GENERIC_STARTERS);
   assert.deepEqual(startersFor(undefined), GENERIC_STARTERS);
   assert.equal(GENERIC_STARTERS.length, 4);
+});
 
-  const [from, to] = placeholderIn(STARTERS[1])!;
-  assert.equal(STARTERS[1].slice(from, to), "[your subject]");
-  const two = "@writer Three interviews about [a topic] and [another]";
-  const [f2, t2] = placeholderIn(two)!;
-  assert.equal(two.slice(f2, t2), "[a topic]", "the first one");
-  for (const t of ["What can you do?", "An empty [] pair", "A [broken\nbracket]"]) assert.equal(placeholderIn(t), null, t);
+test("a starter's placeholders: one field each, labeled with its text, a live preview, and the finished message", () => {
+  assert.deepEqual(placeholdersIn(STARTERS[1]), ["your subject"]);
+  assert.deepEqual(placeholdersIn("Three interviews about [a topic] with [a group], then [a topic] again"), ["a topic", "a group"], "each once, in order");
+  for (const t of ["What can you do?", "An empty [] pair", "A [broken\nbracket]", "[  ]"]) assert.deepEqual(placeholdersIn(t), [], t);
 
-  // the chat screen sends a starter with no placeholder and fills the box with one that has
+  // the preview: each blank stays bracketed until its field has a value
+  const s = "One interview about [your subject], based on the attached notes";
+  assert.deepEqual(previewParts(s, {}), [{ text: "One interview about " }, { text: "[your subject]", blank: true }, { text: ", based on the attached notes" }]);
+  assert.deepEqual(previewParts(s, { "your subject": "  " }).filter((p) => p.blank).length, 1, "spaces alone are no value");
+  assert.equal(fillStarter(s, { "your subject": " a hobby " }), "One interview about a hobby, based on the attached notes");
+  assert.equal(fillStarter("Two about [x] and [y], then [x]", { x: "cats", y: "dogs" }), "Two about cats and dogs, then cats", "a placeholder used twice gets its value twice");
+
+  // Send waits until every field is filled
+  assert.equal(allFilled(["your subject"], {}), false);
+  assert.equal(allFilled(["a", "b"], { a: "x", b: " " }), false);
+  assert.equal(allFilled(["a", "b"], { a: "x", b: "y" }), true);
+
+  // a starter that mentions an attachment offers Attach
+  assert.equal(mentionsAttachment(s), true);
+  assert.equal(mentionsAttachment("Summarize the attachment"), true);
+  assert.equal(mentionsAttachment("Three interviews about [your subject]"), false);
+  assert.equal(mentionsAttachment("An attache case"), false);
+});
+
+test("the chat screen: a starter without placeholders sends at once; one with them opens the dialog, which sends only when filled", () => {
   const chats = readFileSync(new URL("../web/src/screens/Chats.tsx", import.meta.url), "utf8");
-  assert.match(chats, /if \(placeholderIn\(idea\)\) return onFill\(body\);/);
+  assert.match(chats, /if \(placeholdersIn\(idea\)\.length\) return setFilling\(idea\);\n    const body = prefix \+ idea;/, "no placeholders: sent at once");
   assert.match(chats, /startersFor\(lead\)\.map/);
   assert.doesNotMatch(chats, /What can you do for our team\?/, "the generic starters live in web/src/starters.ts alone");
+  const dialog = chats.slice(chats.indexOf("function StarterDialog"), chats.indexOf("function Conversation"));
+  assert.match(dialog, /const ready = allFilled\(labels, values\) && !busy;/);
+  assert.match(dialog, /disabled=\{!ready\} data-testid="starter-send"/, "Send disabled until every field is filled");
+  assert.match(dialog, /if \(k < labels\.length - 1\) fields\.current\[k \+ 1\]\?\.focus\(\);\n    else send\(\);/, "Enter moves on, and in the last field sends");
+  assert.match(dialog, /<button className="btn ghost" onClick=\{onClose\}>\n\s+Cancel/, "Cancel only closes");
+  assert.match(dialog, /\{attach && \(/, "Attach only for a starter that mentions an attachment");
+  assert.match(dialog, /api\.upload\(`\/api\/chats\/\$\{chatId\}\/files`, files, body\)/, "attached files go with the message");
+  assert.match(dialog, /enterKeyHint=\{k === labels\.length - 1 \? "send" : "next"\}/, "a phone's keyboard says next, then send");
+  assert.doesNotMatch(chats, /onFill|setSelectionRange\(at\[0\]/, "the message box is no longer filled");
 });
