@@ -52,6 +52,7 @@ import { eventVisible, statusSeenBy } from "./eventfilter.ts";
 import { attachTaskText, deleteTaskFile, fileJson, fileDownload, FileRefusal, zipTaskFiles } from "./files.ts";
 import { ArchiveRefusal, setArchived, TASK_STATUSES } from "./archive.ts";
 import { driverOf, drivenAgents, serviceById, serviceForToken, serviceRequest, serviceTables, type ServiceAccount } from "./serviceaccounts.ts";
+import { parseProgress } from "./taskprogress.ts";
 
 export const NOTE_AFTER_MS = 2 * 60_000;
 const STATES = ["pending", "taken", "done", "declined"] as const;
@@ -322,7 +323,18 @@ export class DrivenAgents {
           if (b.assignee === "" || b.assignee === null) Object.assign(patch, { assigneeType: "", assigneeId: "" });
           else Object.assign(patch, { assigneeType: "agent", assigneeId: this.agentFor(me(c), b.assignee).id });
         }
-        return c.json({ task: svc.updateTask(t.id, patch) });
+        // a short line shown in place on the task and its plan card, such as "Step 17 of 43" (taskprogress.ts)
+        let progress: string | undefined;
+        if (b.progress !== undefined) {
+          try {
+            progress = parseProgress(b.progress);
+          } catch (e) {
+            throw new HttpRefusal(400, (e as Error).message);
+          }
+        }
+        let task = Object.keys(patch).length || progress === undefined ? svc.updateTask(t.id, patch) : t;
+        if (progress !== undefined) task = svc.setTaskProgress(t.id, progress);
+        return c.json({ task });
       }),
     );
 

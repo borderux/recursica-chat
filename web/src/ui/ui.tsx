@@ -91,7 +91,7 @@ export function vis(s?: AgentStatus): Vis {
       return "sleeping";
   }
 }
-/** A live "Working" mark for a task card while its agent is busy in the task's chat. */
+/** A live "Working" mark for a task card while its agent is busy in the task's chat. `done`: the task isn't at working (web/src/taskprogress.ts showsWorking), so no mark. */
 export function WorkingMark({ a, chatId, done }: { a?: Agent; chatId: string; done?: boolean }) {
   if (done || !a || vis(a.status) !== "working" || (a.status.chatId && a.status.chatId !== chatId)) return null;
   return (
