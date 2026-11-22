@@ -5,6 +5,7 @@ import type { DB } from "./db.ts";
 import { json, now, getSetting } from "./db.ts";
 import { id } from "./crypto.ts";
 import type { Bus } from "./bus.ts";
+import { progressOf, writeProgress } from "./taskprogress.ts";
 
 export const MAX_HOPS = 5;
 
@@ -501,6 +502,7 @@ export class Services {
         updatedAt: r.updated_at,
         archivedAt: r.archived_at ?? null,
         archivedBy: r.archived_by ?? "",
+        progress: progressOf(this.db, r.id),
       }
     );
   }
@@ -520,6 +522,17 @@ export class Services {
     this.db
       .prepare("UPDATE tasks SET status = ?, title = ?, assignee_type = ?, assignee_id = ?, updated_at = ? WHERE id = ?")
       .run(patch.status ?? t.status, patch.title ?? t.title, patch.assigneeType ?? t.assigneeType, patch.assigneeId ?? t.assigneeId, now(), tid);
+    const task = this.task(tid);
+    this.bus.emitEvent({ type: "task", chatId: task.chatId, task });
+    if (t.planId) this.refreshPlanCard(t.planId);
+    return task;
+  }
+  /** Sets a task's progress line (taskprogress.ts), shown in place on the task and its plan card; "" clears it. */
+  setTaskProgress(tid: string, progress: string): any {
+    const t = this.task(tid);
+    if (!t) throw new Error("no such task");
+    if (!writeProgress(this.db, tid, progress)) return t;
+    this.db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now(), tid);
     const task = this.task(tid);
     this.bus.emitEvent({ type: "task", chatId: task.chatId, task });
     if (t.planId) this.refreshPlanCard(t.planId);

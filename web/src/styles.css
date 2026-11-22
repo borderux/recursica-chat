@@ -133,6 +133,8 @@ svg.i.lg { width: 22px; height: 22px; }
 .todo .box.stuck { border-color: var(--blocked); color: var(--blocked); font-size: 12px; font-weight: 700; }
 .todo .box.ask { border-color: var(--waiting); }
 .todo .done-t { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
+/* a task's progress line, set while it runs (web/src/taskprogress.ts) */
+.todo .task-progress { display: block; font-size: 12.5px; color: var(--ink-3); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .todo .who { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .todo .who .av { --s: 22px; }
 .typing-b { background: var(--tint, var(--them)); border-radius: 20px; padding: 13px 14px; display: inline-flex; gap: 4px; }

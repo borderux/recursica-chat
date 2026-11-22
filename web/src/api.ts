@@ -156,6 +156,8 @@ export interface Task {
   updatedAt: number;
   /** When it was archived, or null: an archived task leaves the lists, under the Archived filter. */
   archivedAt?: number | null;
+  /** A short line set while the task runs, such as "Step 17 of 43" (server/src/taskprogress.ts). */
+  progress?: string;
 }
 export interface Memory {
   id: string;

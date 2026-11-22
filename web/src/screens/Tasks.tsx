@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { AgentAv, Empty, Filters, Icon, UserAv, WorkingMark } from "../ui/ui.tsx";
+import { progressLine, showsWorking } from "../taskprogress.ts";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
 import { FileChips, UPLOAD_ACCEPT, useTaskFiles } from "../ui/files.tsx";
 
@@ -158,7 +159,10 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                         {list.map((t, i) => (
                           <li key={t.id} style={{ padding: "8px 0", borderTop: i ? "1px solid var(--line)" : undefined }}>
                             <TaskBox t={t} onToggle={() => setStatus(t, t.status === "done" ? "todo" : "done")} />
-                            <span className={finished(t) ? "done-t" : ""}>{t.title}</span>
+                            <span className={finished(t) ? "done-t" : ""}>
+                              {t.title}
+                              {progressLine(t) && <span className="task-progress">{progressLine(t)}</span>}
+                            </span>
                             <span className="who">
                               {t.status === "needs_you" && <span className="status waiting">Needs you</span>}
                               {t.status === "checking" && <span className="status working">Checking</span>}
@@ -176,7 +180,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                                 <option value="done">Done</option>
                                 <option value="cancelled">Cancelled</option>
                               </select>
-                              {t.assigneeType === "agent" && <WorkingMark a={agent(t.assigneeId)} chatId={t.chatId} done={t.status === "done"} />}
+                              {t.assigneeType === "agent" && <WorkingMark a={agent(t.assigneeId)} chatId={t.chatId} done={!showsWorking(t)} />}
                               {t.assigneeType === "agent" && <AgentAv a={agent(t.assigneeId)} size={28} dot={false} />}
                               {t.assigneeType === "user" && <UserAv u={user(t.assigneeId)} size={28} />}
                               <button

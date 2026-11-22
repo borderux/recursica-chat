@@ -5,6 +5,7 @@ import { FileChips, UPLOAD_ACCEPT } from "../ui/files.tsx";
 import { api, type Agent, type Approval, type Chat, type Member, type Message, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
+import { progressLine, showsWorking } from "../taskprogress.ts";
 import { allFilled, fillStarter, mentionsAttachment, placeholdersIn, previewParts, startersFor } from "../starters.ts";
 import {
   AgentAv,
@@ -725,10 +726,13 @@ function PlanCard({ m }: { m: Message }) {
           {steps.map((t) => (
             <li key={t.id}>
               <TaskBox t={t} onToggle={() => toggle(t)} />
-              <span className={t.status === "done" || t.status === "cancelled" ? "done-t" : ""}>{t.title}</span>
+              <span className={t.status === "done" || t.status === "cancelled" ? "done-t" : ""}>
+                {t.title}
+                {progressLine(t) && <span className="task-progress">{progressLine(t)}</span>}
+              </span>
               <span className="who">
                 {t.status === "needs_you" && <Icon n="lock" size="sm" className="muted" />}
-                {t.assigneeType === "agent" && <WorkingMark a={agent(t.assigneeId)} chatId={m.chatId} done={t.status === "done"} />}
+                {t.assigneeType === "agent" && <WorkingMark a={agent(t.assigneeId)} chatId={m.chatId} done={!showsWorking(t)} />}
                 {t.assigneeType === "agent" && <AgentAv a={agent(t.assigneeId)} size={28} dot={false} />}
                 {t.assigneeType === "user" && <UserAv u={user(t.assigneeId)} size={28} />}
               </span>
