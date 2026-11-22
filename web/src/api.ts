@@ -99,6 +99,8 @@ export interface Agent {
   monthCostMicros: number;
   /** its instructions, model, autonomy, sandbox and budget come from a repository (server/src/managed.ts) */
   managed?: boolean;
+  /** suggestions an empty chat with the agent shows; none means the generic ones (server/src/starters.ts) */
+  starters?: string[];
 }
 export interface Member {
   type: "user" | "agent";

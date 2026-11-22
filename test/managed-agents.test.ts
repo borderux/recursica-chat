@@ -57,6 +57,7 @@ test("manage, agent-set and agent-get: only a managed agent, only the fields tha
       budgetCents: 500,
       instructionsSha256: createHash("sha256").update(WANT.instructions).digest("hex"),
       instructionsLength: WANT.instructions.length,
+      starters: [],
     });
     assert.match(agentModels(db), /^writer\tlarge$/m);
     assert.equal(manage(db, "writer", false), "unmanaged");
