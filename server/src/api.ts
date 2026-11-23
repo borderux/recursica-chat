@@ -25,6 +25,7 @@ import { MENTION_ALL } from "./services.ts";
 import { statusSeenBy } from "./eventfilter.ts";
 import { APP_CATALOG, preset, presetConfig, checkPreset } from "./apps.ts";
 import { registerArchive, TASK_STATUSES } from "./archive.ts";
+import { registerBoard } from "./board.ts";
 import { registerUploads } from "./uploads.ts";
 import { requestIsHttps, exportWorkspace, eraseWorkspace, hosting, useSsoToken, hostingFetch } from "./hosting.ts";
 
@@ -227,6 +228,7 @@ export function buildApi(app: App): Hono<Env> {
   registerProfile(api, db);
   registerFiles(api, db, app.cfg.dataDir, seesChat);
   registerArchive(api, app, isAdmin);
+  registerBoard(api, app);
   registerUploads(api, app.uploads, { isAdmin, seesChat });
   api.patch("/api/me", async (c) => {
     const u = c.get("user");
