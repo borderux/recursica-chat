@@ -9,6 +9,7 @@ import { AuthScreen } from "./screens/Auth.tsx";
 import { ChatsScreen } from "./screens/Chats.tsx";
 import { NeedsScreen } from "./screens/Needs.tsx";
 import { TasksScreen } from "./screens/Tasks.tsx";
+import { BoardScreen } from "./screens/Board.tsx";
 import { MemoryScreen } from "./screens/Memory.tsx";
 import { PeopleScreen } from "./screens/People.tsx";
 import { ProfileScreen, WatchScreen, AddAgentScreen } from "./screens/Agent.tsx";
@@ -109,6 +110,10 @@ function Routes() {
       rail = "tasks";
       body = <TasksScreen chatId={b} />;
       break;
+    case "board":
+      rail = "board";
+      body = <BoardScreen search={q ?? ""} />;
+      break;
     case "memory":
       rail = "memory";
       body = <MemoryScreen filter={params.get("f") ?? "team"} scopeId={params.get("id") ?? ""} />;
@@ -177,6 +182,7 @@ function Shell({ rail, children }: { rail: string; children: ReactNode }) {
         {item("chats", "chat", "Chats", "/chats", unread)}
         {item("needs", "inbox", "Needs you", "/needs", pending.length)}
         {item("tasks", "board", "Tasks", "/tasks")}
+        {item("board", "layers", "Board", "/board")}
         {item("memory", "memory", "Memory", "/memory")}
         {item("people", "users", "People and agents", "/people")}
         <div className="bottom">

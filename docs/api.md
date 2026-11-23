@@ -101,6 +101,7 @@ Agent fields:
 | PATCH | `/api/memories/:id` | Any | `{ forget?, restore?, text? }` | Forget, restore or edit a note. Chat memory needs you to see that chat; agent notes need a builder. |
 | PUT | `/api/memories/paused` | Admin | `{ paused }` | Pauses or resumes memory. |
 | GET | `/api/tasks` | Any | `?chat=<id>` | Tasks in chats you can see. |
+| GET | `/api/board` | Any | `?agent=&chat=&person=&plan=&done=all` | The Board: `{ tasks, plans, options, doneSince, doneHidden }`. Open tasks in the chats you're in and in agents-only chats, with no admin override, like `/api/tasks`. `plans`: plan titles from those chats only. Done and cancelled tasks from the last 14 days, unless `done=all`. |
 | POST | `/api/tasks` | Member of the chat | `{ chatId, title, assigneeType?, assigneeId? }` | |
 | PATCH | `/api/tasks/:id` | Any | `{ status?, title?, assigneeType?, assigneeId? }` | `status`: `todo`, `working`, `needs_you`, `checking`, `done`. 404 unless you can see the task's chat. |
 
