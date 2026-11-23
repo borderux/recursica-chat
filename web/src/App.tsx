@@ -14,6 +14,8 @@ import { PeopleScreen } from "./screens/People.tsx";
 import { ProfileScreen, WatchScreen, AddAgentScreen } from "./screens/Agent.tsx";
 import { SettingsScreen } from "./screens/Settings.tsx";
 import { SearchScreen } from "./screens/Search.tsx";
+import { Reconnecting } from "./ui/Reconnecting.tsx";
+import { nextDelay, FIRST_DELAY } from "./reconnect.ts";
 
 interface Boot {
   setupNeeded: boolean;
@@ -28,14 +30,29 @@ interface Boot {
 export function App() {
   const [boot, setBoot] = useState<Boot | null>(null);
   const [err, setErr] = useState("");
+  const [tries, setTries] = useState(0);
   const [path, go] = usePath();
   const load = useCallback(() => {
     api
       .get<Boot>("/api/state")
-      .then(setBoot)
-      .catch((e) => setErr(e.message));
+      .then((b) => {
+        setErr("");
+        setBoot(b);
+      })
+      .catch((e) => {
+        setErr(e.message);
+        setTries((n) => n + 1);
+      });
   }, []);
   useEffect(load, [load]);
+  // a page loaded while the server restarts: keep trying (reconnect.ts) instead of a dead page
+  useEffect(() => {
+    if (!tries) return;
+    let d = FIRST_DELAY;
+    for (let i = 1; i < tries; i++) d = nextDelay(d);
+    const t = window.setTimeout(load, d);
+    return () => clearTimeout(t);
+  }, [tries, load]);
   useEffect(() => {
     const out = () => setBoot((b) => (b ? { ...b, user: null } : b));
     window.addEventListener("cc:signedout", out);
@@ -46,7 +63,7 @@ export function App() {
     return (
       <div className="empty" style={{ height: "100vh", justifyContent: "center" }}>
         <Icon n="alert" />
-        Can't reach the server: {err}
+        Can't reach the server: {err}. Trying again…
         <button className="btn" onClick={() => location.reload()}>
           Try again
         </button>
@@ -170,6 +187,7 @@ function Shell({ rail, children }: { rail: string; children: ReactNode }) {
         </div>
       </RailFrame>
       {children}
+      <Reconnecting />
       {lowCredits && !noteHidden && (
         <div className="credit-note" role="status">
           <span>{lowCredits.empty ? "AI credits are used up." : `AI credits are running low: ${Math.round(lowCredits.usedPct)}% used.`}</span>

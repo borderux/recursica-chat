@@ -19,6 +19,7 @@ export function NeedsScreen({ id }: { id?: string }) {
     load();
   }, []);
   useBus((e) => {
+    if (e.type === "hello") load(); // reconnected: catch up
     if (e.type === "approval") setAll((l) => [e.approval, ...l.filter((x) => x.id !== e.approval.id)]);
   });
   const decided = all.filter((a) => a.state !== "pending").slice(0, 30);

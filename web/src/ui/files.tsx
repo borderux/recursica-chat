@@ -79,6 +79,7 @@ export function useTaskFiles(): Record<string, FileRef[]> {
   useBus((e) => {
     if (e.type === "message" && e.message?.meta?.taskId && e.message?.meta?.files) setN((x) => x + 1);
     if (e.type === "task") setN((x) => x + 1); // a task-only attach posts no message, only a task event
+    if (e.type === "hello") setN((x) => x + 1); // reconnected: catch up
   });
   return byTask;
 }

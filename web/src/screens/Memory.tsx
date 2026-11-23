@@ -21,6 +21,7 @@ export function MemoryScreen({ filter, scopeId }: { filter: string; scopeId: str
       .catch(fail);
   }, [fail]);
   useBus((e) => {
+    if (e.type === "hello") api.get("/api/memories").then((r) => setMems(r.memories)).catch(() => {}); // reconnected: catch up
     if (e.type === "memory") setMems((l) => (l.some((m) => m.id === e.memory.id) ? l.map((m) => (m.id === e.memory.id ? e.memory : m)) : [e.memory, ...l]));
   });
 
