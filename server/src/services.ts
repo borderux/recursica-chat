@@ -7,6 +7,7 @@ import { id } from "./crypto.ts";
 import type { Bus } from "./bus.ts";
 import { progressOf, writeProgress } from "./taskprogress.ts";
 import { taskExtras } from "./tasksettings.ts";
+import { statusByOf } from "./taskstatusby.ts";
 
 export const MAX_HOPS = 5;
 
@@ -505,6 +506,7 @@ export class Services {
         archivedBy: r.archived_by ?? "",
         progress: progressOf(this.db, r.id),
         ...taskExtras(this.db, r), // settings and cloud (tasksettings.ts)
+        statusBy: statusByOf(this.db, r), // the person who set its status, while it stands (taskstatusby.ts)
       }
     );
   }

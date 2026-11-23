@@ -135,7 +135,7 @@ test("with no settings file, a task's JSON gains only empty settings and no clou
     assert.deepEqual(t.settings, {});
     assert.equal(t.cloud, null);
     const keys = Object.keys(t).sort();
-    assert.deepEqual(keys, ["archivedAt", "archivedBy", "assigneeId", "assigneeType", "chatId", "cloud", "createdAt", "createdBy", "id", "planId", "progress", "settings", "status", "title", "updatedAt"]);
+    assert.deepEqual(keys, ["archivedAt", "archivedBy", "assigneeId", "assigneeType", "chatId", "cloud", "createdAt", "createdBy", "id", "planId", "progress", "settings", "status", "statusBy", "title", "updatedAt"]);
     assert.deepEqual((await s.a.c.get("/api/task-settings")).json, { settings: [] });
     const r = await s.a.c.put(`/api/tasks/${s.task.id}/settings`, { speed: "fast" });
     assert.equal(r.status, 400, "no such setting");
