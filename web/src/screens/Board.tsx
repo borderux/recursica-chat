@@ -11,6 +11,7 @@ import { AgentAv, Empty, Icon, Modal, UserAv, WorkingMark, ago, dayLabel } from 
 import { progressLine, showsWorking } from "../taskprogress.ts";
 import { COLUMNS, STATUS_LABELS, cardAgent, dropStatus, filterCount, readQuery, writeQuery, type BoardQuery, type ColumnKey, type Status } from "../board.ts";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
+import { TaskSettings } from "../ui/tasksettings.tsx";
 import "../board.css";
 
 interface BoardData {
@@ -288,6 +289,7 @@ function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Sta
         </div>
       )}
       {line && <div className="board-progress">{line}</div>}
+      <TaskSettings t={t} />
       <div className="board-meta">
         {c && (
           <span className="board-chat" title="Chat">

@@ -11,6 +11,10 @@
 //                         containers on Linux, where host.docker.internal is the bridge IP, not loopback
 //   CIRCLECHAT_TRUST_PROXY 1 = behind a TLS reverse proxy: honour X-Forwarded-Proto/Host (Secure cookies)
 //   CIRCLECHAT_SEED       path to a seed file applied once on first boot, then deleted (see hosting.ts)
+//   CIRCLECHAT_TASK_SETTINGS_FILE  JSON file declaring per-task settings (see tasksettings.ts)
+//   CIRCLECHAT_GATEWAY_PORT  port of a separate listener for the model gateway's routes; unset, none (see gatewayroute.ts)
+//   CIRCLECHAT_GATEWAY_HOST  its bind address (default 127.0.0.1)
+//   CIRCLECHAT_GATEWAY_KEY_FILE  file holding the key that listener requires
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { App, newMasterKey } from "./app.ts";
@@ -23,6 +27,8 @@ import { allowedSandboxes } from "./agents/sandboxes.ts";
 import { allowedOrigins } from "./origin.ts";
 import { toolDefault } from "./toolpolicy.ts";
 import { googleConfig, passwordSignIn, readClientSecret } from "./google.ts";
+import { taskSettingsOf } from "./tasksettings.ts";
+import { startGatewayRoute } from "./gatewayroute.ts";
 
 // fails here, before anything is written, on a sandbox name it doesn't know
 const sandboxes = allowedSandboxes();
@@ -83,6 +89,10 @@ if (process.env.CIRCLECHAT_LOCAL_MODEL_URL && !getSetting(app.db, "providers")) 
 }
 
 const server = createHttpServer(app);
+// per-task settings (a bad file logs one error, and tasks have none), and the gateway's own listener
+const declared = taskSettingsOf(app.db).settings;
+if (declared.length) console.log(`Task settings: ${declared.map((s) => s.label).join(", ")}.`);
+const gatewayRoute = startGatewayRoute(app);
 
 // Agent containers on Linux: a narrow /mcp/*-only listener on the docker bridge.
 const agentListen = process.env.CIRCLECHAT_AGENT_LISTEN ?? "";
@@ -129,6 +139,7 @@ server.listen(port, host, async () => {
 const shutdown = async () => {
   server.close();
   agentServer?.close();
+  gatewayRoute?.close();
   await app.stop();
   process.exit(0);
 };

@@ -30,6 +30,10 @@ The server reads these in `server/src/index.ts`. The operator commands in `serve
 | `CIRCLECHAT_SEED` | none | Path to a seed file applied once on first boot, while there are no users. The file is deleted afterwards. See [Deployment](deployment.md#seed-file). |
 | `CIRCLECHAT_LOCAL_MODEL_URL` | none | Registers an OpenAI-compatible provider with the id `local` on first run, while no providers are saved yet. |
 | `CIRCLECHAT_LOCAL_MODELS` | none | Comma-separated model names for the `local` provider above. |
+| `CIRCLECHAT_TASK_SETTINGS_FILE` | none | A JSON file declaring per-task settings: `{ "settings": [ { "key", "label", "default", "choices": [ { "value", "label" } ] } ], "stall_minutes"? }`. Keys and values are 1 to 40 of `a-z`, `0-9` and `_`, labels at most 80 characters, 2 to 10 choices, and the default is one of them. `stall_minutes` (default 15) is only used in the chat line for a task that moved to a cloud model because it stalled. Each task then shows a choice for each setting, which its creator or an admin may change. Unset or missing, there are no settings. A file that doesn't pass the checks logs one error, and the server runs with no settings. See [API](api.md#task-settings). |
+| `CIRCLECHAT_GATEWAY_PORT` | none | Turns on a separate listener for a model gateway in front of the agents: it reads tasks' settings and records moves to a cloud model, and serves only `/gateway/*` (see [API](api.md#the-gateway-route)). Unset, there is no listener. The main port never serves `/gateway/*`. A value that isn't a port logs an error, and there is no listener. |
+| `CIRCLECHAT_GATEWAY_HOST` | `127.0.0.1` | The address that listener binds to. |
+| `CIRCLECHAT_GATEWAY_KEY_FILE` | none | A file holding the key the listener requires as `Authorization: Bearer <key>`, read once at start. No other credential works there, and this key works nowhere else. Without a usable file, the listener refuses every request. |
 
 Other variables used only by tools and tests:
 

@@ -92,6 +92,8 @@ export function createHttpServer(app: App): HttpServer {
         res.writeHead(r.status, { "content-type": "text/plain" }).end(r.body);
         return;
       }
+      // the gateway's routes live on their own listener only (gatewayroute.ts)
+      if (/^\/gateway(\/|\?|$)/i.test(url)) return void res.writeHead(404, { "content-type": "text/plain" }).end("not found");
       if (url.startsWith("/api/")) {
         const no = refusal(req);
         if (no) return void res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: no }));
