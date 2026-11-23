@@ -66,12 +66,13 @@ export const TYPES: Record<string, string> = {
   md: "text/markdown",
   csv: "text/csv",
   json: "application/json",
+  vtt: "text/vtt",
   pdf: "application/pdf",
   png: "image/png",
   jpg: "image/jpeg",
   zip: "application/zip",
 };
-const TEXT_TYPES = new Set(["txt", "md", "csv", "json"]);
+const TEXT_TYPES = new Set(["txt", "md", "csv", "json", "vtt"]);
 
 const ready = new WeakSet<object>();
 /** Creates the table once per database. */
@@ -418,7 +419,7 @@ export function attachFilesTool(deps: { db: DB; svc: Services; dataDir: string; 
         if (hasText === hasPath) fail("each file needs either text or path");
         if (hasText) {
           const name = safeName(f.name);
-          if (!TEXT_TYPES.has(ext(name))) fail(`${name}: text goes in a .txt, .md, .csv or .json file`);
+          if (!TEXT_TYPES.has(ext(name))) fail(`${name}: text goes in a .txt, .md, .csv, .json or .vtt file`);
           const data = Buffer.from(f.text, "utf8");
           if (data.length > LIMITS.fileBytes) fail(`${name} is over ${LIMITS.fileBytes / 1024 / 1024} MB`);
           items.push({ name, data });
@@ -523,7 +524,7 @@ export function attachTaskText(deps: { db: DB; svc: Services; dataDir: string },
   const { db, svc, dataDir } = deps;
   fileTables(db);
   const name = safeName(a.name);
-  if (!TEXT_TYPES.has(ext(name))) fail(`${name}: text goes in a .txt, .md, .csv or .json file`);
+  if (!TEXT_TYPES.has(ext(name))) fail(`${name}: text goes in a .txt, .md, .csv, .json or .vtt file`);
   const items: Item[] = [{ name, data: Buffer.from(a.text, "utf8") }];
   if (a.markdown) {
     if (ext(name) !== "txt") fail(`${name}: markdown makes a copy of a .txt file only`);

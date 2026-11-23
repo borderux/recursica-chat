@@ -298,7 +298,7 @@ export class Uploads {
     if (t) return { state: t.state, reason: t.reason, pages: t.pages, pagesRead: t.pages_read, text: t.text };
     // an agent's own text file: its bytes
     const r = this.deps.db.prepare("SELECT * FROM files WHERE id = ?").get(fileId) as any;
-    if (r && ["txt", "md", "csv", "json"].includes(ext(r.name))) {
+    if (r && ["txt", "md", "csv", "json", "vtt"].includes(ext(r.name))) {
       try {
         return { state: "ok", reason: "", pages: null, pagesRead: null, text: readFileSync(join(filesDir(this.deps.dataDir), r.id), "utf8") };
       } catch {}
