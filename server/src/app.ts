@@ -11,6 +11,7 @@ import { Gateway } from "./gateway.ts";
 import { AgentRuntime } from "./agents/runtime.ts";
 import { ENGINES, agentDirs, dockerfileFor, REPO_ROOT, type ModelProvider } from "./agents/engines.ts";
 import { attachFilesTool } from "./files.ts";
+import { taskCommentTools } from "./taskcomments.ts";
 import { readFileTool, Uploads } from "./uploads.ts";
 import { Triggers } from "./triggers.ts";
 import { SlackBridge } from "./bridges/slack.ts";
@@ -73,6 +74,7 @@ export class App {
     this.driven = new DrivenAgents(this); // agents a service drives (drivenagents.ts)
     this.uploads = new Uploads({ db: this.db, svc: this.svc, dataDir: cfg.dataDir }); // people's files (uploads.ts)
     this.gateway.addCoreTool(readFileTool(this.uploads));
+    for (const t of taskCommentTools(this)) this.gateway.addCoreTool(t); // task_comments, task_comment (taskcomments.ts)
   }
 
   start(): void {

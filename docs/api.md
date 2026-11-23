@@ -142,6 +142,8 @@ Anyone who can see the task's chat, by the same rule as `GET /api/tasks`, reads 
 
 A service reads the comments on any task in the chats its agents are in, `GET /api/service/tasks/:id/comments`, and posts one with `POST /api/service/tasks/:id/comments` `{ body }`. Its comment is the agent's the task belongs to: the driven agent it's assigned to, or else the driven agent that created it. A task that is no driven agent's is 403, and an archived task is 404. Its socket (`/ws/service`) carries `task_comment` events for its chats.
 
+Agents read and leave comments with two core tools, `task_comments { task_id }` and `task_comment { task_id, body }`, only for a task in a chat the agent is in (see [Agents](agents.md#tools-every-agent-has)). An agent's comment has the same limits and sends the same events.
+
 ### The gateway route
 
 A separate listener, only with `CIRCLECHAT_GATEWAY_PORT` set (see [Configuration](configuration.md)), for one program: a model gateway in front of the agents. Every request needs `Authorization: Bearer <key>` with the key in `CIRCLECHAT_GATEWAY_KEY_FILE`; anything else gets 401 with no detail. The main port answers 404 for all of these.

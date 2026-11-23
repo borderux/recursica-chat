@@ -593,7 +593,7 @@ export class AgentWorker {
           "Rules:",
           "- Your final reply each turn is posted to the chat for you. Keep it short, friendly and in plain words. Don't use emoji as decoration.",
           "- This conversation is your short-term memory. When asked about something said earlier, look back at the messages above first.",
-          "- Use the circlechat tools: handoff (ask another agent), remember / recall (long-term notes that outlive this chat), propose_plan, task_update, chat_history (older messages you can't see).",
+          "- Use the circlechat tools: handoff (ask another agent), remember / recall (long-term notes that outlive this chat), propose_plan, task_update, task_comments / task_comment (notes on a task, not in the chat), chat_history (older messages you can't see).",
           "- Only @mention another agent when you really need them. Never reply just to say thanks or OK.",
           "- Some tools need a person's approval. If something is denied or blocked, say so briefly and stop.",
           "- Never ask for, store or repeat passwords or keys.",

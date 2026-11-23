@@ -17,12 +17,16 @@
 // - People's routes: GET and POST /api/tasks/:id/comments, DELETE /api/tasks/:id/comments/:cid.
 //   Service routes, for a task in a chat the service drives (drivenagents.ts): GET and POST
 //   /api/service/tasks/:id/comments; a service posts as the driven agent the task belongs to.
+// - Agents' core tools (taskCommentTools, registered in app.ts as attach_files is): task_comments reads
+//   a task's comments and task_comment posts one as the agent, for a task in a chat the agent is in.
 import type { Hono } from "hono";
 import type { App } from "./app.ts";
 import type { DB } from "./db.ts";
 import { now } from "./db.ts";
 import { id } from "./crypto.ts";
 import { drivenAgents, type ServiceAccount } from "./serviceaccounts.ts";
+import { personHandle } from "./profile.ts";
+import type { CallContext, ToolDef } from "./gateway.ts";
 
 export const MAX_COMMENT = 4000;
 
@@ -218,4 +222,56 @@ export function registerServiceTaskComments(api: Hono<any>, app: App, chatIds: (
       return c.json({ comment: addComment(app, t.id, { type: "agent", id: a.id }, bodyOf(b)) }, 201);
     });
   });
+}
+
+// ---------------------------------------------------------------- agents' tools
+
+/**
+ * The task_comments and task_comment tools, core tools (gateway.ts addCoreTool): for a task in a chat
+ * the calling agent is in, not archived. Anything else is a plain error. A comment the agent posts is
+ * its own, with the people's limits, and wakes no one.
+ */
+export function taskCommentTools(app: App): ToolDef[] {
+  const { db, svc } = app;
+  const agentTask = (raw: unknown, ctx: CallContext) => {
+    const tid = String(raw ?? "");
+    const t = tid ? svc.task(tid) : undefined;
+    if (!t || t.archivedAt || !svc.isMember(t.chatId, "agent", ctx.agent.id)) throw new Error(`there is no task ${tid || "(no id given)"} in a chat you are in`);
+    return t;
+  };
+  // people appear to agents as @username, as in chat_history
+  const who = (c: TaskComment) => {
+    if (c.author.type === "agent") return svc.agent(c.author.id)?.name ?? (c.author.name || "an agent");
+    const h = personHandle(db, c.author.id);
+    return h ? `@${h}` : c.author.name || "someone";
+  };
+  return [
+    {
+      name: "task_comments",
+      category: "core",
+      description: "Read a task's comments, oldest first: notes people and agents left on the task. For a task in a chat you are in.",
+      inputSchema: { type: "object", properties: { task_id: { type: "string", description: "the task's id, such as t_…" } }, required: ["task_id"] },
+      run: async (a: any, ctx: CallContext) => {
+        const t = agentTask(a.task_id, ctx);
+        const list = commentsOf(db, t.id);
+        const lines = list.map((c) => `[${new Date(c.createdAt).toISOString()}] ${who(c)}: ${c.deleted ? "(comment deleted)" : c.body}`);
+        return `Comments on "${t.title}" (${t.id}), oldest first:\n${lines.join("\n") || "(no comments)"}`;
+      },
+    },
+    {
+      name: "task_comment",
+      category: "core",
+      description: `Leave a comment on a task, as you: plain text, 1 to ${MAX_COMMENT} characters. It shows on the task, not in the chat, and wakes no one. For a task in a chat you are in.`,
+      inputSchema: {
+        type: "object",
+        properties: { task_id: { type: "string", description: "the task's id, such as t_…" }, body: { type: "string", description: "the comment" } },
+        required: ["task_id", "body"],
+      },
+      run: async (a: any, ctx: CallContext) => {
+        const t = agentTask(a.task_id, ctx);
+        const c = addComment(app, t.id, { type: "agent", id: ctx.agent.id }, a.body);
+        return `Comment ${c.id} added to "${t.title}".`;
+      },
+    },
+  ];
 }
