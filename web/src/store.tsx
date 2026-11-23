@@ -4,6 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type Agent, type Approval, type BusEvent, type Chat, type User } from "./api.ts";
 import { mentionsMe } from "./mentions.ts";
+import { keepConnected } from "./reconnect.ts";
 
 /** A person's username, color and photo version (GET /api/profiles; server/src/profile.ts). */
 export interface Profile {
@@ -50,39 +51,23 @@ function useSocket(enabled: boolean, onOpen: () => void): boolean {
   openRef.current = onOpen;
   useEffect(() => {
     if (!enabled) return;
-    let ws: WebSocket | null = null;
-    let stop = false;
-    let delay = 500;
-    let timer: number | undefined;
-    const connect = () => {
-      ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-      ws.onopen = () => {
-        delay = 500;
+    // reconnect.ts: a capped backoff after a drop; each open runs onOpen, which reloads the lists
+    return keepConnected(() => new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`), {
+      up: () => {
         setUp(true);
         openRef.current();
-      };
-      ws.onmessage = (m) => {
+      },
+      down: () => setUp(false),
+      message: (data) => {
         let e: BusEvent;
         try {
-          e = JSON.parse(String(m.data));
+          e = JSON.parse(String(data));
         } catch {
           return;
         }
         for (const l of [...listeners]) l(e);
-      };
-      ws.onclose = () => {
-        setUp(false);
-        if (stop) return;
-        timer = window.setTimeout(connect, delay);
-        delay = Math.min(delay * 2, 10_000);
-      };
-    };
-    connect();
-    return () => {
-      stop = true;
-      clearTimeout(timer);
-      ws?.close();
-    };
+      },
+    });
   }, [enabled]);
   return up;
 }

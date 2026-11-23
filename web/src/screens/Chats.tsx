@@ -7,6 +7,7 @@ import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
 import { progressLine, showsWorking } from "../taskprogress.ts";
 import { allFilled, fillStarter, mentionsAttachment, placeholdersIn, previewParts, startersFor } from "../starters.ts";
+import { draftKey, useDraft } from "../drafts.ts";
 import {
   AgentAv,
   Cluster,
@@ -181,10 +182,12 @@ export function ChatsScreen({ chatId, info }: { chatId?: string; info?: boolean 
  * once; one with them opens StarterDialog to fill them in first.
  */
 function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
-  const { go, fail } = useStore();
+  const { go, fail, me } = useStore();
   const [busy, setBusy] = useState(false);
-  const [filling, setFilling] = useState<string | null>(null);
+  // the starter being filled in, kept with its blanks (drafts.ts) so a reload opens it again
+  const [kept, setFilling] = useDraft(draftKey(me.id, chatId, "starter"), "");
   const lead = agents[0];
+  const filling = kept && startersFor(lead).includes(kept) ? kept : "";
   // in a group with several agents, ask the first one by name
   const prefix = agents.length > 1 ? `@${lead.handle} ` : "";
   const ask = async (idea: string) => {
@@ -216,7 +219,7 @@ function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
           </button>
         ))}
       </div>
-      {filling && <StarterDialog chatId={chatId} starter={filling} prefix={prefix} agentName={lead.name} onClose={() => setFilling(null)} />}
+      {filling && <StarterDialog chatId={chatId} starter={filling} prefix={prefix} agentName={lead.name} onClose={() => setFilling("")} />}
       <div className="start-more">
         <button className="btn sm ghost" onClick={() => go("/agents/new")}>
           <Icon n="plus" size="sm" /> Add another agent
@@ -236,9 +239,9 @@ function StartHere({ chatId, agents }: { chatId: string; agents: Agent[] }) {
  * attachment ("the attached persona") also offers Attach.
  */
 function StarterDialog({ chatId, starter, prefix, agentName, onClose }: { chatId: string; starter: string; prefix: string; agentName: string; onClose: () => void }) {
-  const { fail } = useStore();
+  const { fail, me } = useStore();
   const labels = useMemo(() => placeholdersIn(starter), [starter]);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useDraft<Record<string, string>>(draftKey(me.id, chatId, `starter:${starter}`), {});
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const fields = useRef<(HTMLInputElement | null)[]>([]);
@@ -252,6 +255,7 @@ function StarterDialog({ chatId, starter, prefix, agentName, onClose }: { chatId
     try {
       if (files.length) await api.upload(`/api/chats/${chatId}/files`, files, body);
       else await api.post(`/api/chats/${chatId}/messages`, { body });
+      setValues({});
       onClose();
     } catch (e) {
       fail(e);
@@ -846,7 +850,8 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
 type PersonPick = { person: string; handle: string };
 function Composer({ chat, agents, placeholder, onOpenInfo }: { chat: Chat; agents: Agent[]; placeholder: string; onOpenInfo: () => void }) {
   const { fail, me, user, profiles } = useStore();
-  const [text, setText] = useState("");
+  // kept per person and chat until it's sent (drafts.ts): a reload or a lost connection keeps it
+  const [text, setText] = useDraft(draftKey(me.id, chat.id), "");
   const [sending, setSending] = useState(false);
   // files to send with the message: PDF, .txt and .md (server/src/uploads.ts)
   const [files, setFiles] = useState<File[]>([]);

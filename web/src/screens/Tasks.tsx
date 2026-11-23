@@ -41,6 +41,11 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
     if (view === "archived") loadArchived();
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
   useBus((e) => {
+    // reconnected (reconnect.ts): catch up on what changed while the connection was down
+    if (e.type === "hello") {
+      api.get("/api/tasks").then((r) => setTasks(r.tasks)).catch(() => {});
+      if (view === "archived") loadArchived();
+    }
     if (e.type !== "task") return;
     // an archived task leaves the open list, and joins the archived one; a restored one, the other way
     const put = (l: Task[], keep: boolean) =>
