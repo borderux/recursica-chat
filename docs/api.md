@@ -103,10 +103,24 @@ Agent fields:
 | GET | `/api/tasks` | Any | `?chat=<id>` | Tasks in chats you can see. |
 | GET | `/api/board` | Any | `?agent=&chat=&person=&plan=&done=all` | The Board: `{ tasks, plans, options, doneSince, doneHidden }`. Open tasks in the chats you're in and in agents-only chats, with no admin override, like `/api/tasks`. `plans`: plan titles from those chats only. Done and cancelled tasks from the last 14 days, unless `done=all`. |
 | POST | `/api/tasks` | Member of the chat | `{ chatId, title, assigneeType?, assigneeId? }` | |
-| PATCH | `/api/tasks/:id` | Any | `{ status?, title?, assigneeType?, assigneeId? }` | `status`: `todo`, `working`, `needs_you`, `checking`, `done`. 404 unless you can see the task's chat. |
+| PATCH | `/api/tasks/:id` | Any | `{ status?, title?, assigneeType?, assigneeId? }` | `status`: `todo`, `working`, `needs_you`, `checking`, `done`, `cancelled`. 404 unless you can see the task's chat. 403 for a status a person may not set on a task an agent runs (see below). |
+| POST | `/api/tasks/:id/reopen` | Any | | A done or cancelled task an agent runs: back to `todo`, and a message from you in the task's chat, `@<agent> Reopened by <you>: please redo "<title>".`, which wakes the agent the usual way. `{ task, message }`. 404 unless you can see the task's chat. 409 for a task that isn't an agent's or isn't finished, an archived task or chat, an agent no longer in the chat, or an agent a service drives when that service can't redo work: `<agent> can't redo a finished task. Ask in the chat for a new run.` |
+| PUT | `/api/service-accounts/:name/redo` | Admin | `{ redo }` | Whether the service can redo a finished task (see below). 404 for no such service. |
 | GET | `/api/task-settings` | Any | | `{ settings }`: the settings this install declares (`CIRCLECHAT_TASK_SETTINGS_FILE`), for the menus. |
 | PUT | `/api/tasks/:id/settings` | The task's creator, or an admin | `{ "<key>": "<value>", ... }` | 404 unless you can see the task's chat. 403 for anyone else. 400 for an unknown key or value, or a done or cancelled task. Each changed key writes one history row, and the `task` event goes out. |
 | GET | `/api/tasks/:id/settings/history` | Any | | `{ changes }`, newest first: `{ id, key, oldValue, newValue, byType, byId, at }`. 404 unless you can see the task's chat. No route edits or deletes a change. |
+
+### Who can change a task's status
+
+A task is **agent-run** when it's assigned to an agent (`assigneeType` is `agent`), including an agent a service drives. The rule is the server's, and the web app offers only what it allows.
+
+| The task | A person (admins too) | The agent's tools, a service's routes |
+|---|---|---|
+| Agent-run, not finished (`todo`, `working`, `checking`, `needs_you`) | Only `cancelled`. Any other status is refused with 403: `This task is run by <agent>: you can cancel it or answer it, not move it.` A task that needs you is answered in its chat: the web app posts an @mention to the agent, and the agent changes the status. | Any status, as before. |
+| Agent-run, `done` or `cancelled` | No status: 403. `POST /api/tasks/:id/reopen` instead. | Any status, as before. |
+| A person's, or no one's | Any status, as before. | Any status, as before. |
+
+**A service that can redo work.** A person may reopen a finished task of an agent a service drives only when the service has said it can redo work. It can't until it says so. The service sets it with `PUT /api/service/redo` `{ redo: true }` (and reads it in `GET /api/service/me` as `redo`); an admin sets it with `PUT /api/service-accounts/:name/redo`. It's kept on the service account itself (`service_accounts.can_redo`).
 
 ### Task settings
 

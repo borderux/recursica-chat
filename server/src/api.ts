@@ -27,6 +27,7 @@ import { APP_CATALOG, preset, presetConfig, checkPreset } from "./apps.ts";
 import { registerArchive, TASK_STATUSES } from "./archive.ts";
 import { registerBoard } from "./board.ts";
 import { registerTaskSettings } from "./tasksettings.ts";
+import { registerTaskRules } from "./taskrules.ts";
 import { registerUploads } from "./uploads.ts";
 import { requestIsHttps, exportWorkspace, eraseWorkspace, hosting, useSsoToken, hostingFetch } from "./hosting.ts";
 
@@ -231,6 +232,7 @@ export function buildApi(app: App): Hono<Env> {
   registerArchive(api, app, isAdmin);
   registerBoard(api, app);
   registerTaskSettings(api, app, { isAdmin, seesChat });
+  registerTaskRules(api, app, { isAdmin, seesChat });
   registerUploads(api, app.uploads, { isAdmin, seesChat });
   api.patch("/api/me", async (c) => {
     const u = c.get("user");

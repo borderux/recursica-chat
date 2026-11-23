@@ -7,8 +7,9 @@ import { useBus, useStore } from "../store.tsx";
 import { AgentAv, Empty, Filters, Icon, UserAv, WorkingMark } from "../ui/ui.tsx";
 import { progressLine, showsWorking } from "../taskprogress.ts";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
-import { FileChips, UPLOAD_ACCEPT, useTaskFiles } from "../ui/files.tsx";
+import { FileChips, TaskAttach, useTaskFiles } from "../ui/files.tsx";
 import { TaskSettings } from "../ui/tasksettings.tsx";
+import { personMoves, statusChoices } from "../taskrules.ts";
 
 const SECTIONS: [string, Task["status"][]][] = [
   ["Needs you", ["needs_you"]],
@@ -164,7 +165,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                       <ul className="todo group" style={{ padding: "6px 16px" }}>
                         {list.map((t, i) => (
                           <li key={t.id} style={{ padding: "8px 0", borderTop: i ? "1px solid var(--line)" : undefined }}>
-                            <TaskBox t={t} onToggle={() => setStatus(t, t.status === "done" ? "todo" : "done")} />
+                            <TaskBox t={t} onToggle={personMoves(t) ? () => setStatus(t, t.status === "done" ? "todo" : "done") : undefined} />
                             <span className={finished(t) ? "done-t" : ""}>
                               {t.title}
                               {progressLine(t) && <span className="task-progress">{progressLine(t)}</span>}
@@ -178,14 +179,14 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                                 style={{ height: 30, width: 120, fontSize: 12.5, paddingRight: 28, backgroundPosition: "right 8px center" }}
                                 value={t.status}
                                 aria-label="Status"
+                                disabled={statusChoices(t).length < 2}
                                 onChange={(e) => setStatus(t, e.target.value as Task["status"])}
                               >
-                                <option value="todo">To do</option>
-                                <option value="working">In progress</option>
-                                <option value="checking">Checking</option>
-                                <option value="needs_you">Needs you</option>
-                                <option value="done">Done</option>
-                                <option value="cancelled">Cancelled</option>
+                                {statusChoices(t).map(([s, label]) => (
+                                  <option key={s} value={s}>
+                                    {label}
+                                  </option>
+                                ))}
                               </select>
                               {t.assigneeType === "agent" && <WorkingMark a={agent(t.assigneeId)} chatId={t.chatId} done={!showsWorking(t)} />}
                               {t.assigneeType === "agent" && <AgentAv a={agent(t.assigneeId)} size={28} dot={false} />}
@@ -200,21 +201,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                               </button>
                             </span>
                             <FileChips files={taskFiles[t.id]} />
-                            <label className="btn sm ghost" style={{ cursor: "pointer" }} title="Attach a PDF, .txt or .md file to this task">
-                              <Icon n="file" size="sm" />
-                              Attach
-                              <input
-                                type="file"
-                                multiple
-                                accept={UPLOAD_ACCEPT}
-                                hidden
-                                onChange={(e) => {
-                                  const picked = Array.from(e.target.files ?? []);
-                                  e.target.value = "";
-                                  if (picked.length) api.upload(`/api/tasks/${t.id}/files`, picked).catch(fail);
-                                }}
-                              />
-                            </label>
+                            <TaskAttach taskId={t.id} />
                           </li>
                         ))}
                       </ul>

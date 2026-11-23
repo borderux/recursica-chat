@@ -3,7 +3,7 @@
 // (server/src/uploads.ts): a download link each, never a preview. The server sends every file as an
 // attachment, so the browser saves the file and never shows or runs it. An upload shows whether its
 // text could be read, and the uploader or an admin may delete it.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Icon } from "./ui.tsx";
@@ -82,4 +82,31 @@ export function useTaskFiles(): Record<string, FileRef[]> {
     if (e.type === "hello") setN((x) => x + 1); // reconnected: catch up
   });
   return byTask;
+}
+
+/** "Attach": a person uploads PDF, .txt or .md files to a task (POST /api/tasks/:id/files). */
+export function TaskAttach({ taskId }: { taskId: string }) {
+  const { fail } = useStore();
+  const pick = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button type="button" className="btn sm ghost" title="Attach a PDF, .txt or .md file to this task" onClick={() => pick.current?.click()}>
+        <Icon n="file" size="sm" />
+        Attach
+      </button>
+      <input
+        ref={pick}
+        type="file"
+        multiple
+        accept={UPLOAD_ACCEPT}
+        hidden
+        aria-label="Attach files"
+        onChange={(e) => {
+          const picked = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          if (picked.length) api.upload(`/api/tasks/${taskId}/files`, picked).catch(fail);
+        }}
+      />
+    </>
+  );
 }

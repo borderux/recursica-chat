@@ -73,3 +73,13 @@ export function cardAgent(t: Pick<Task, "assigneeType" | "assigneeId" | "created
   if (t.assigneeType === "agent" && t.assigneeId) return t.assigneeId;
   return isAgent(t.createdBy) ? t.createdBy : "";
 }
+
+/** The open task's id from the board's address (/board?…&task=…), or "". */
+export const readTask = (search: string) => new URLSearchParams(search).get("task") ?? "";
+
+/** The board's address for these filters, with a task open (`id`) or none (""). */
+export function boardUrl(q: BoardQuery, id = ""): string {
+  const s = writeQuery(q);
+  if (!id) return `/board${s}`;
+  return `/board${s ? `${s}&` : "?"}task=${encodeURIComponent(id)}`;
+}
