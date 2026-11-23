@@ -24,6 +24,7 @@
 //   files of a plan onto a task (zipTaskFiles), and deletes such files of its agents, never anyone
 //   else's (deleteTaskFile).
 // - The service archives and restores the tasks of the agents it drives (archive.ts).
+// - The service reads a task's comments, and comments as the agent the task belongs to (taskcomments.ts).
 // - The service reads the text of a file in its chats, such as a PDF a person attached (uploads.ts),
 //   and each request lists the files on its message.
 // - A request nobody has picked up after two minutes gets one note in its chat, so people know the
@@ -53,13 +54,14 @@ import { attachTaskText, deleteTaskFile, fileJson, fileDownload, FileRefusal, zi
 import { ArchiveRefusal, setArchived, TASK_STATUSES } from "./archive.ts";
 import { driverOf, drivenAgents, serviceById, serviceForToken, serviceRequest, serviceTables, type ServiceAccount } from "./serviceaccounts.ts";
 import { parseProgress } from "./taskprogress.ts";
+import { registerServiceTaskComments } from "./taskcomments.ts";
 
 export const NOTE_AFTER_MS = 2 * 60_000;
 const STATES = ["pending", "taken", "done", "declined"] as const;
 type RequestState = (typeof STATES)[number];
 const NEXT: Record<RequestState, RequestState[]> = { pending: ["taken", "done", "declined"], taken: ["done", "declined"], done: [], declined: [] };
 // the chat events a service's socket carries, for its own chats only
-const EVENT_TYPES = new Set(["message", "message_updated", "task", "delivery", "agent_status", "agent_activity", "typing", "chat"]);
+const EVENT_TYPES = new Set(["message", "message_updated", "task", "task_comment", "delivery", "agent_status", "agent_activity", "typing", "chat"]);
 const MAX_TEXT = 200_000;
 
 function requestTables(app: App): void {
@@ -434,6 +436,9 @@ export class DrivenAgents {
         return c.json({ message, delivery: delivery && { ...delivery, private: b.private === true, fresh: b.fresh === true } });
       }),
     );
+
+    // a task's comments: read them, and post one as the driven agent the task belongs to (taskcomments.ts)
+    registerServiceTaskComments(api, this.app, (sid) => this.chatIds(sid));
 
     // archive or restore a task of an agent the service drives (archive.ts): it leaves every list, and stays
     for (const action of ["archive", "restore"] as const)

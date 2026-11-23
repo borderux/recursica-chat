@@ -161,6 +161,17 @@ export interface Task {
   /** Each declared setting's choice, defaults filled in, and the latest move to a cloud model (server/src/tasksettings.ts). */
   settings?: Record<string, string>;
   cloud?: { since: number; reason: string; text: string } | null;
+  /** How many comments it has that aren't deleted (server/src/taskcomments.ts). */
+  commentCount?: number;
+}
+/** A comment on a task (server/src/taskcomments.ts): plain text; a deleted one has no body. */
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  author: { type: "user" | "agent"; id: string; name: string };
+  body: string;
+  createdAt: number;
+  deleted: boolean;
 }
 export interface Memory {
   id: string;
@@ -207,6 +218,7 @@ export type BusEvent =
   | { type: "typing"; chatId: string; agentId: string; on: boolean }
   | { type: "approval"; approval: Approval }
   | { type: "task"; chatId: string; task: Task }
+  | { type: "task_comment"; chatId: string; taskId: string; comment: TaskComment }
   | { type: "memory"; memory: Memory }
   | { type: "chat"; chat: Chat }
   | { type: "delivery"; delivery: Delivery }

@@ -2,8 +2,8 @@
 // A task opened from the Board (screens/Board.tsx), in upstream's Modal over the board: its title,
 // status, people, chat, plan, progress, last update, files and settings, built from the same parts as
 // a task's row on the Tasks screen. The task's id lives in the board's address (?task=…), so Back
-// closes it and a link opens it. Changing the status here is the board's own move. 2.0 has no task
-// comments, so there are none here.
+// closes it and a link opens it. Changing the status here is the board's own move. Its comments, live,
+// are ui/taskcomments.tsx.
 //
 // Who changes the status (web/src/taskrules.ts; the server's rule: server/src/taskrules.ts): a task an
 // agent runs is the agent's to move. A person may cancel it, answer it in its chat when it needs them
@@ -17,6 +17,7 @@ import { useBus, useStore } from "../store.tsx";
 import { AgentAv, Empty, Icon, Modal, UserAv, WorkingMark, ago, dayLabel } from "../ui/ui.tsx";
 import { FileChips, TaskAttach, useTaskFiles } from "../ui/files.tsx";
 import { TaskSettings } from "../ui/tasksettings.tsx";
+import { TaskComments } from "../ui/taskcomments.tsx";
 import { progressLine, showsWorking } from "../taskprogress.ts";
 import { cardAgent, type Status } from "../board.ts";
 import { agentRunNote, isAgentRun, isFinished, statusChoices } from "../taskrules.ts";
@@ -388,6 +389,7 @@ export function TaskModal(props: TaskModalProps) {
             <TaskAttach taskId={t.id} />
           </div>
         </section>
+        <TaskComments t={t} />
       </div>
     </Modal>
   );

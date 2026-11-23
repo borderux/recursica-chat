@@ -13,6 +13,7 @@ import { progressLine, showsWorking } from "../taskprogress.ts";
 import { COLUMNS, boardUrl, cardAgent, dropStatus, filterCount, readQuery, readTask, writeQuery, type BoardQuery, type ColumnKey, type Status } from "../board.ts";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
 import { TaskSettings } from "../ui/tasksettings.tsx";
+import { CommentCount } from "../ui/taskcomments.tsx";
 import { Assignee, StatusMenu, TaskModal, Who } from "./BoardTask.tsx";
 import { personMoves } from "../taskrules.ts";
 import "../board.css";
@@ -346,6 +347,7 @@ function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Sta
         <span className="small muted" title={`Updated ${dayLabel(t.updatedAt)}`}>
           Updated {Date.now() - t.updatedAt < 60_000 ? "just now" : ago(t.updatedAt)}
         </span>
+        <CommentCount t={t} />
         <StatusMenu t={t} label={`Status of ${t.title}`} className="board-status" onMove={props.onMove} />
       </div>
     </article>

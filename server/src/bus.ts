@@ -10,6 +10,7 @@ export type BusEvent =
   | { type: "typing"; chatId: string; agentId: string; on: boolean }
   | { type: "approval"; approval: unknown }
   | { type: "task"; chatId: string; task: unknown }
+  | { type: "task_comment"; chatId: string; taskId: string; comment: unknown }
   | { type: "memory"; memory: unknown }
   | { type: "chat"; chat: unknown }
   | { type: "delivery"; delivery: unknown }
