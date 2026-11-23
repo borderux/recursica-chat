@@ -247,10 +247,18 @@ test("a service attaches a text file to a task for its agent: on the task alone,
     assert.equal(await got(r.json.files[1].id), transcriptMarkdown(text), "and the server's .md copy");
     assert.deepEqual((await call("GET", `/api/service/files?task=${task.id}`)).json.files.map((f: any) => f.name), ["gadget-interview-1-of-1.txt", "gadget-interview-1-of-1.md"]);
 
+    // a WebVTT file, such as a transcript in a meeting tool's export format, is text too
+    const vttText = "WEBVTT\n\n1\n00:00:05.000 --> 00:00:09.000\nResearcher: Tell me about the last time you used it.\n";
+    const vtt = await call("POST", "/api/service/agents/designer/files", { task: task.id, name: "gadget-interview-1-of-1.vtt", text: vttText });
+    assert.equal(vtt.status, 200, JSON.stringify(vtt.json));
+    assert.equal(await got(vtt.json.files[0].id), vttText, "the .vtt's text, exactly");
+    assert.equal((await call("POST", "/api/service/agents/designer/files", { task: task.id, name: "gadget.vtt", text: "x", markdown: true })).json.error, "gadget.vtt: markdown makes a copy of a .txt file only");
+    assert.deepEqual((await call("GET", `/api/service/files?task=${task.id}`)).json.files.map((f: any) => f.name), ["gadget-interview-1-of-1.txt", "gadget-interview-1-of-1.md", "gadget-interview-1-of-1.vtt"]);
+
     // the agent bundles them as its own
     const zipped = await h.app.gateway.call(
       "attach_files",
-      { include: r.json.files.map((f: any) => f.id), zip: "gadget-transcripts.zip", task: task.id },
+      { include: [...r.json.files, ...vtt.json.files].map((f: any) => f.id), zip: "gadget-transcripts.zip", task: task.id },
       { agent: h.app.svc.agent(designer.id)!, chatId: group.id, requester: { type: "user", id: "" } },
     );
     assert.equal(zipped.isError, false, zipped.text);
@@ -269,7 +277,7 @@ test("a service attaches a text file to a task for its agent: on the task alone,
     for (const [b, why] of [
       [{ ...ok, text: undefined }, /text is missing/],
       [{ ...ok, name: "notes.exe" }, /needs a name ending in/],
-      [{ ...ok, name: "bundle.zip" }, /text goes in a \.txt, \.md, \.csv or \.json file/],
+      [{ ...ok, name: "bundle.zip" }, /text goes in a \.txt, \.md, \.csv, \.json or \.vtt file/],
       [{ ...ok, name: "notes.md", markdown: true }, /markdown makes a copy of a \.txt file only/],
       [{ ...ok, text: "x".repeat(LIMITS.fileBytes + 1) }, /notes\.txt is over 10 MB/],
     ] as const) {
