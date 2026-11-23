@@ -2,7 +2,8 @@
 // The Board (server/src/board.ts, web/src/board.ts, web/src/screens/Board.tsx): every task a person
 // may see, across their chats, in columns by status. The same visibility rule as GET /api/tasks, with
 // no admin override; plan titles only from those chats; the filters; Done's 14-day window; and moves
-// through PATCH /api/tasks/:id with its own permission check.
+// through PATCH /api/tasks/:id with its own permission check (who may set which status:
+// test/task-rules.test.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
@@ -117,15 +118,17 @@ test("moving a card: PATCH works in a chat the person may see, and is refused wi
   const h = await startApp();
   try {
     const s = await seed(h);
-    const ok = await s.a.c.patch(`/api/tasks/${s.launch[0].id}`, { status: "working" });
+    // a person's own task moves freely; a task an agent runs only to cancelled (test/task-rules.test.ts)
+    const ok = await s.a.c.patch(`/api/tasks/${s.mine.id}`, { status: "working" });
     assert.equal(ok.status, 200);
     assert.equal(ok.json.task.status, "working");
-    const agents = await s.a.c.patch(`/api/tasks/${s.between.id}`, { status: "done" });
-    assert.equal(agents.status, 200, "an agents-only chat: anyone may see it, and move its tasks");
+    assert.equal((await s.a.c.patch(`/api/tasks/${s.launch[0].id}`, { status: "working" })).status, 403, "an agent's task isn't moved by hand");
+    const agents = await s.a.c.patch(`/api/tasks/${s.between.id}`, { status: "cancelled" });
+    assert.equal(agents.status, 200, "an agents-only chat: anyone may see it, and cancel its tasks");
     const refused = await s.a.c.patch(`/api/tasks/${s.secret[0].id}`, { status: "done" });
     assert.equal(refused.status, 404);
     assert.equal(h.app.svc.task(s.secret[0].id).status, "todo", "unchanged");
-    assert.equal((await s.a.c.patch(`/api/tasks/${s.launch[0].id}`, { status: "finished" })).status, 400, "only 2.0's statuses");
+    assert.equal((await s.a.c.patch(`/api/tasks/${s.mine.id}`, { status: "finished" })).status, 400, "only 2.0's statuses");
   } finally {
     await h.close();
   }

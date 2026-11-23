@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Board in the browser (web/src/screens/Board.tsx): columns, filters in the address, back and
-// forward, drag and drop, the status menu, a refused move going back, live updates, and the phone
-// layout with its filter sheet. Run: npm run build && node --test e2e/board.e2e.ts
+// forward, drag and drop, the status menu, a refused move going back, live updates, a card opening
+// its task, and the phone layout with its filter sheet. Run: npm run build && node --test e2e/board.e2e.ts
 // BOARD_SHOTS=<dir> also saves the screenshots for docs/screenshots.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -71,7 +71,7 @@ before(async () => {
   svc.setTaskProgress(ids.summary, "Section 2 of 5");
   ids.budget = task(launch, "Approve the budget", designer, ["user", me], "needs_you");
   task(launch, "Book the venue", people["Person B"], ["user", people["Person B"]], "cancelled");
-  task(app, "Check the analytics", me, ["user", people["Person C"]]);
+  ids.analytics = task(app, "Check the analytics", me, ["user", people["Person C"]]);
   task(pair, "Agree on the tone of voice", designer, ["agent", writer]);
   task(launch, "Set up the repo", me, ["user", me], "done");
   ids.old = task(app, "Clean up old drafts", me, ["user", me], "done");
@@ -143,7 +143,7 @@ test("filters live in the address: reload and back and forward keep them", async
 
 test("a card moves by drag and drop, and by its status menu", async () => {
   await page.goto(`${h.url}/board`, { waitUntil: "networkidle0" });
-  await page.waitForSelector(`[data-task="${ids.publish}"]`);
+  await page.waitForSelector(`[data-task="${ids.analytics}"]`);
   const drag = async (id: string, col: string) => {
     await page.evaluate((id) => {
       const dt = new DataTransfer();
@@ -158,13 +158,20 @@ test("a card moves by drag and drop, and by its status menu", async () => {
       dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
     }, col);
   };
-  await drag(ids.publish, "progress");
-  await waitColumn(page, ids.publish, "progress", "dropped in In progress");
-  await waitFor(() => h.app.svc.task(ids.publish).status === "working", "saved as working");
-  await page.select(`[data-task="${ids.publish}"] select`, "done");
-  await waitColumn(page, ids.publish, "done", "moved to Done by its menu");
-  await waitFor(() => h.app.svc.task(ids.publish).status === "done", "saved as done");
+  // a person's task moves freely
+  await drag(ids.analytics, "progress");
+  await waitColumn(page, ids.analytics, "progress", "dropped in In progress");
+  await waitFor(() => h.app.svc.task(ids.analytics).status === "working", "saved as working");
+  await page.select(`[data-task="${ids.analytics}"] select.board-status`, "done");
+  await waitColumn(page, ids.analytics, "done", "moved to Done by its menu");
+  await waitFor(() => h.app.svc.task(ids.analytics).status === "done", "saved as done");
   assert.ok(page.url().endsWith("/board"), "the menu doesn't open the chat");
+  // a task an agent runs doesn't: no drag, and its menu offers only Cancel (task-rules.test.ts)
+  assert.equal(await page.$eval(`[data-task="${ids.publish}"]`, (e) => e.getAttribute("draggable")), "false");
+  await drag(ids.publish, "progress");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await columnOf(page, ids.publish), "todo", "a drop does nothing");
+  assert.deepEqual(await page.$$eval(`[data-task="${ids.publish}"] select.board-status option`, (l) => l.map((o) => (o as HTMLOptionElement).textContent)), ["To do", "Cancel"]);
 });
 
 test("a move the server refuses goes back", async () => {
@@ -189,9 +196,12 @@ test("live: a change on the server moves the card, and a new task appears", asyn
   await waitColumn(page, t.id, "todo", "new task live");
 });
 
-test("clicking a card opens its chat", async () => {
+test("clicking a card opens its task over the board, not its chat (more in board-task.e2e.ts)", async () => {
   await page.click(`[data-task="${ids.draft}"] .board-card-t b`);
-  await waitFor(() => page.url().endsWith(`/chats/${ids.launch}`), "the chat");
+  await waitFor(() => page.url().endsWith(`/board?task=${ids.draft}`), "the task in the address");
+  await page.waitForSelector('.overlay [role="dialog"] .bt');
+  await page.keyboard.press("Escape");
+  await waitFor(() => page.url().endsWith("/board"), "closed");
 });
 
 test("phone: the columns scroll sideways, and the filters sit in a sheet", async () => {

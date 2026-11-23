@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Board: the tasks of every chat a person may see, in columns by status (web/src/board.ts; the data:
 // GET /api/board, server/src/board.ts). The filters live in the address, so a filtered board can be
-// bookmarked, and back and forward work. A card opens its chat. A card moves by drag and drop, or by
-// its status menu (keyboard, phone), through PATCH /api/tasks/:id like the Tasks screen: it moves at
-// once, and goes back if the server says no.
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
+// bookmarked, and back and forward work. A card opens its task in a window over the board
+// (screens/BoardTask.tsx), with ?task=… in the address. A card moves by drag and drop, by its status
+// menu (keyboard, phone), or by the status in its open task, through PATCH /api/tasks/:id like the
+// Tasks screen: it moves at once, and goes back if the server says no.
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { api, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
-import { AgentAv, Empty, Icon, Modal, UserAv, WorkingMark, ago, dayLabel } from "../ui/ui.tsx";
+import { AgentAv, Empty, Icon, Modal, WorkingMark, ago, dayLabel } from "../ui/ui.tsx";
 import { progressLine, showsWorking } from "../taskprogress.ts";
-import { COLUMNS, STATUS_LABELS, cardAgent, dropStatus, filterCount, readQuery, writeQuery, type BoardQuery, type ColumnKey, type Status } from "../board.ts";
+import { COLUMNS, boardUrl, cardAgent, dropStatus, filterCount, readQuery, readTask, writeQuery, type BoardQuery, type ColumnKey, type Status } from "../board.ts";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
 import { TaskSettings } from "../ui/tasksettings.tsx";
+import { Assignee, StatusMenu, TaskModal, Who } from "./BoardTask.tsx";
+import { personMoves } from "../taskrules.ts";
 import "../board.css";
 
 interface BoardData {
@@ -26,6 +29,7 @@ export function BoardScreen({ search }: { search: string }) {
   const { go, fail } = useStore();
   const q = readQuery(search);
   const qs = writeQuery(q);
+  const taskId = readTask(search);
   const [data, setData] = useState<BoardData | null>(null);
   // moves on their way to the server: shown at once, dropped again if the server refuses
   const [moving, setMoving] = useState<Record<string, Status>>({});
@@ -56,7 +60,22 @@ export function BoardScreen({ search }: { search: string }) {
     later.current = window.setTimeout(() => load().catch(() => {}), 300);
   });
 
-  const setQuery = (patch: Partial<BoardQuery>) => go(`/board${writeQuery({ ...q, ...patch })}`);
+  const setQuery = (patch: Partial<BoardQuery>) => go(boardUrl({ ...q, ...patch }));
+  // a task opens as a step in the history, marked as the board's own, so closing it is Back
+  const openTask = (id: string) => {
+    go(boardUrl(q, id));
+    history.replaceState({ boardTask: true }, "", location.href);
+  };
+  const closing = useRef(false);
+  useEffect(() => {
+    closing.current = false;
+  }, [taskId]);
+  const closeTask = () => {
+    if (closing.current) return;
+    closing.current = true;
+    if (history.state?.boardTask) history.back();
+    else go(boardUrl(q), true); // opened from a link: the board takes its place
+  };
   const move = (t: Task, status: Status) => {
     if (status === t.status || t.archivedAt) return;
     setMoving((m) => ({ ...m, [t.id]: status }));
@@ -81,7 +100,8 @@ export function BoardScreen({ search }: { search: string }) {
     e.preventDefault();
     const id = dragId || e.dataTransfer.getData("text/plain");
     const t = tasks.find((x) => x.id === id);
-    const to = t && dropStatus(t.status, col);
+    // a task an agent runs doesn't move by hand (taskrules.ts): its menu offers Cancel, or Reopen
+    const to = t && personMoves(t) && dropStatus(t.status, col);
     if (t && to) move(t, to);
     setDragId("");
     setOver("");
@@ -149,6 +169,7 @@ export function BoardScreen({ search }: { search: string }) {
                       plan={data?.plans[t.planId] ?? ""}
                       dragging={dragId === t.id}
                       onMove={(s) => move(t, s)}
+                      onOpen={() => openTask(t.id)}
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", t.id);
                         e.dataTransfer.effectAllowed = "move";
@@ -166,6 +187,9 @@ export function BoardScreen({ search }: { search: string }) {
             );
           })}
         </div>
+      )}
+      {taskId && (
+        <TaskModal key={taskId} id={taskId} task={tasks.find((t) => t.id === taskId)} moving={moving[taskId]} plans={data?.plans ?? {}} onMove={move} onClose={closeTask} />
       )}
       {sheet && (
         <Modal
@@ -245,24 +269,23 @@ function FilterMenus({ q, data, onChange, labelled }: { q: BoardQuery; data: Boa
   );
 }
 
-function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Status) => void; onDragStart: (e: DragEvent) => void; onDragEnd: () => void }) {
+function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Status) => void; onOpen: () => void; onDragStart: (e: DragEvent) => void; onDragEnd: () => void }) {
   const { t, plan } = props;
-  const { agent, user, chat, who, go } = useStore();
+  const { agent, chat } = useStore();
   const c = chat(t.chatId);
   const aid = cardAgent(t, (id) => !!agent(id));
   const a = aid ? agent(aid) : undefined;
-  // an archived task can't move from here: restore it first (Tasks > Archived)
+  // an archived task can't move from here: restore it first (Tasks > Archived); one an agent runs
+  // doesn't move by hand (taskrules.ts)
   const readOnly = !!t.archivedAt;
-  const open = () => go(`/chats/${t.chatId}`);
+  const fixed = readOnly || !personMoves(t);
+  const open = props.onOpen;
   const line = progressLine(t);
-  let assignee: ReactNode = <span className="muted">Anyone</span>;
-  if (t.assigneeType === "agent" && t.assigneeId) assignee = <Who av={<AgentAv a={agent(t.assigneeId)} size={20} dot={false} />} name={agent(t.assigneeId)?.name ?? "An agent"} />;
-  if (t.assigneeType === "user" && t.assigneeId) assignee = <Who av={<UserAv u={user(t.assigneeId)} size={20} />} name={who(t.assigneeId)} />;
   return (
     <article
-      className={"board-card" + (props.dragging ? " dragging" : "") + (readOnly ? " ro" : "")}
+      className={"board-card" + (props.dragging ? " dragging" : "") + (fixed ? " ro" : "")}
       data-task={t.id}
-      draggable={!readOnly}
+      draggable={!fixed}
       onDragStart={props.onDragStart}
       onDragEnd={props.onDragEnd}
       onClick={open}
@@ -273,7 +296,8 @@ function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Sta
         }
       }}
       tabIndex={0}
-      aria-label={`${t.title}. Open in its chat`}
+      aria-label={`${t.title}. Open the task`}
+      aria-haspopup="dialog"
     >
       <div className="board-card-t">
         <span className="todo board-box">
@@ -314,37 +338,16 @@ function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Sta
           </>
         )}
         <dt>Assignee</dt>
-        <dd>{assignee}</dd>
+        <dd>
+          <Assignee t={t} />
+        </dd>
       </dl>
       <div className="board-foot">
         <span className="small muted" title={`Updated ${dayLabel(t.updatedAt)}`}>
           Updated {Date.now() - t.updatedAt < 60_000 ? "just now" : ago(t.updatedAt)}
         </span>
-        <select
-          className="input sm board-status"
-          value={t.status}
-          disabled={readOnly}
-          aria-label={`Status of ${t.title}`}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          onChange={(e) => props.onMove(e.target.value as Status)}
-        >
-          {STATUS_LABELS.map(([s, label]) => (
-            <option key={s} value={s}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <StatusMenu t={t} label={`Status of ${t.title}`} className="board-status" onMove={props.onMove} />
       </div>
     </article>
-  );
-}
-
-function Who({ av, name }: { av: ReactNode; name: string }) {
-  return (
-    <span className="board-name">
-      {av}
-      <span>{name}</span>
-    </span>
   );
 }

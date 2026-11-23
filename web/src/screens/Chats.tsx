@@ -6,6 +6,7 @@ import { api, type Agent, type Approval, type Chat, type Member, type Message, t
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
 import { progressLine, showsWorking } from "../taskprogress.ts";
+import { agentRunNote, personMoves } from "../taskrules.ts";
 import { allFilled, fillStarter, mentionsAttachment, placeholdersIn, previewParts, startersFor } from "../starters.ts";
 import { draftKey, useDraft } from "../drafts.ts";
 import {
@@ -729,7 +730,13 @@ function PlanCard({ m }: { m: Message }) {
         <ul className="todo">
           {steps.map((t) => (
             <li key={t.id}>
-              <TaskBox t={t} onToggle={() => toggle(t)} />
+              {personMoves(t) ? (
+                <TaskBox t={t} onToggle={() => toggle(t)} />
+              ) : (
+                <span title={agentRunNote(agent(t.assigneeId)?.name ?? "An agent")} aria-disabled="true">
+                  <TaskBox t={t} />
+                </span>
+              )}
               <span className={t.status === "done" || t.status === "cancelled" ? "done-t" : ""}>
                 {t.title}
                 {progressLine(t) && <span className="task-progress">{progressLine(t)}</span>}

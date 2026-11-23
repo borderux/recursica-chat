@@ -45,6 +45,8 @@ export interface ServiceAccount {
   lastUsedAt: number | null;
   revokedAt: number | null;
   hasToken: boolean;
+  /** It can redo a finished task, so a person may reopen one its agents ran. Off until it says so. */
+  canRedo: boolean;
 }
 
 export function serviceTables(db: DB): void {
@@ -57,6 +59,9 @@ export function serviceTables(db: DB): void {
       agent_id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE, since INTEGER NOT NULL
     );`,
   );
+  // whether the service can redo a finished task: a person may reopen its agents' tasks (taskrules.ts)
+  const cols = (db.prepare("PRAGMA table_info(service_accounts)").all() as any[]).map((r) => r.name);
+  if (!cols.includes("can_redo")) db.exec("ALTER TABLE service_accounts ADD COLUMN can_redo INTEGER NOT NULL DEFAULT 0");
 }
 
 const hashOf = (t: string) => createHash("sha256").update(t).digest("hex");
@@ -67,6 +72,7 @@ const row = (r: any): ServiceAccount => ({
   lastUsedAt: r.last_used_at ?? null,
   revokedAt: r.revoked_at ?? null,
   hasToken: !!r.token_hash,
+  canRedo: !!r.can_redo,
 });
 
 export function serviceByName(db: DB, name: string): ServiceAccount | undefined {
@@ -136,6 +142,12 @@ export function driverOf(db: DB, agentId: string): string | undefined {
   return (db.prepare("SELECT service_id FROM service_agents WHERE agent_id = ?").get(agentId) as any)?.service_id;
 }
 
+/** Whether the service has said it can redo a finished task (taskrules.ts). */
+export const serviceCanRedo = (db: DB, sid: string): boolean => !!serviceById(db, sid)?.canRedo;
+export function setServiceRedo(db: DB, sid: string, on: boolean): void {
+  db.prepare("UPDATE service_accounts SET can_redo = ? WHERE id = ?").run(on ? 1 : 0, sid);
+}
+
 /** The agents a service drives. */
 export function drivenAgents(db: DB, sid: string): { id: string; handle: string; name: string }[] {
   return db
@@ -181,7 +193,20 @@ export function registerServiceAccounts(api: Hono<any>, db: DB, extend?: (svcApi
   });
   api.get("/api/service/me", (c) => {
     const s = c.get("service") as ServiceAccount;
-    return c.json({ service: { name: s.name, createdAt: s.createdAt, agents: drivenAgents(db, s.id).map((a) => a.handle) } });
+    return c.json({ service: { name: s.name, createdAt: s.createdAt, agents: drivenAgents(db, s.id).map((a) => a.handle), redo: !!serviceById(db, s.id)?.canRedo } });
+  });
+  // the service says whether it can redo a finished task: then a person may reopen one its agents ran
+  api.put("/api/service/redo", async (c) => {
+    const s = c.get("service") as ServiceAccount;
+    let b: any;
+    try {
+      b = await c.req.json();
+    } catch {
+      b = undefined;
+    }
+    if (typeof b?.redo !== "boolean") return c.json({ error: "redo is true or false" }, 400);
+    setServiceRedo(db, s.id, b.redo);
+    return c.json({ service: { name: s.name, redo: b.redo } });
   });
   extend?.(api);
   // any other /api/service/* path: not found here, rather than falling through to a person's routes
