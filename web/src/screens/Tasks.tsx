@@ -8,6 +8,7 @@ import { AgentAv, Empty, Filters, Icon, UserAv, WorkingMark } from "../ui/ui.tsx
 import { progressLine, showsWorking } from "../taskprogress.ts";
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
 import { FileChips, UPLOAD_ACCEPT, useTaskFiles } from "../ui/files.tsx";
+import { TaskSettings } from "../ui/tasksettings.tsx";
 
 const SECTIONS: [string, Task["status"][]][] = [
   ["Needs you", ["needs_you"]],
@@ -167,6 +168,7 @@ export function TasksScreen({ chatId }: { chatId?: string }) {
                             <span className={finished(t) ? "done-t" : ""}>
                               {t.title}
                               {progressLine(t) && <span className="task-progress">{progressLine(t)}</span>}
+                              <TaskSettings t={t} />
                             </span>
                             <span className="who">
                               {t.status === "needs_you" && <span className="status waiting">Needs you</span>}

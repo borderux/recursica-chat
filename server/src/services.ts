@@ -6,6 +6,7 @@ import { json, now, getSetting } from "./db.ts";
 import { id } from "./crypto.ts";
 import type { Bus } from "./bus.ts";
 import { progressOf, writeProgress } from "./taskprogress.ts";
+import { taskExtras } from "./tasksettings.ts";
 
 export const MAX_HOPS = 5;
 
@@ -503,6 +504,7 @@ export class Services {
         archivedAt: r.archived_at ?? null,
         archivedBy: r.archived_by ?? "",
         progress: progressOf(this.db, r.id),
+        ...taskExtras(this.db, r), // settings and cloud (tasksettings.ts)
       }
     );
   }

@@ -158,6 +158,9 @@ export interface Task {
   archivedAt?: number | null;
   /** A short line set while the task runs, such as "Step 17 of 43" (server/src/taskprogress.ts). */
   progress?: string;
+  /** Each declared setting's choice, defaults filled in, and the latest move to a cloud model (server/src/tasksettings.ts). */
+  settings?: Record<string, string>;
+  cloud?: { since: number; reason: string; text: string } | null;
 }
 export interface Memory {
   id: string;

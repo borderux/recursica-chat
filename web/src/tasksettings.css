@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: AGPL-3.0-only
+   A task's settings and its cloud mark (ui/tasksettings.tsx), on Board cards and Tasks rows. Upstream's
+   colors and controls, in a file of its own. */
+.ts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 12.5px; min-width: 0; }
+.todo .ts-row { margin-top: 4px; }
+.ts-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 8px; border-radius: 99px; background: var(--raised); border: 1px solid var(--line); color: var(--ink-2); max-width: 100%; min-width: 0; }
+.ts-chip:not(.ts-edit) { padding-right: 8px; }
+.ts-chip .ts-k { color: var(--ink-3); white-space: nowrap; }
+.ts-chip b { font-weight: 600; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-edit { position: relative; cursor: pointer; padding-right: 6px; }
+.ts-edit b { color: var(--ink); }
+.ts-edit .i { width: 11px; height: 11px; color: var(--ink-3); flex: none; }
+.ts-edit:hover, .ts-edit:focus-within { border-color: var(--accent); }
+.ts-edit:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
+.ts-edit select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; border: 0; } /* 16px: a phone does not zoom in on it */
+.ts-cloud { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px 0 8px; border-radius: 99px; background: var(--waiting-soft); color: var(--waiting); font-weight: 600; white-space: nowrap; cursor: help; }
+.ts-cloud .i { width: 13px; height: 13px; }
+.ts-cloud:focus-visible { outline: 2px solid var(--waiting); outline-offset: 2px; }
+.ts-hist { width: 24px; height: 24px; min-width: 24px; padding: 0; color: var(--ink-3); }
+.ts-hist .i { width: 14px; height: 14px; }
+
+.ts-history { display: grid; gap: 12px; }
+.ts-history-cloud { background: var(--waiting-soft); color: var(--waiting); border-radius: 10px; padding: 8px 12px; }
+.ts-history ol { list-style: none; display: grid; gap: 10px; }
+.ts-history li { display: grid; gap: 2px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.ts-history li:last-child { border-bottom: 0; padding-bottom: 0; }
+
+@media (max-width: 600px) {
+  .ts-chip, .ts-cloud { height: 30px; }
+  .ts-hist { width: 30px; height: 30px; min-width: 30px; }
+}
+/* in a Tasks row the chips sit inside the title, whose line-through (done) must not reach them */
+.todo .ts-row { display: inline-flex; width: 100%; }
+/* the title that holds them takes the row's free width, so the chips sit on one line when they fit */
+.todo li > span:has(> .ts-row) { flex: 1; min-width: 0; }

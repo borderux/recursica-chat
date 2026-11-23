@@ -104,6 +104,24 @@ Agent fields:
 | GET | `/api/board` | Any | `?agent=&chat=&person=&plan=&done=all` | The Board: `{ tasks, plans, options, doneSince, doneHidden }`. Open tasks in the chats you're in and in agents-only chats, with no admin override, like `/api/tasks`. `plans`: plan titles from those chats only. Done and cancelled tasks from the last 14 days, unless `done=all`. |
 | POST | `/api/tasks` | Member of the chat | `{ chatId, title, assigneeType?, assigneeId? }` | |
 | PATCH | `/api/tasks/:id` | Any | `{ status?, title?, assigneeType?, assigneeId? }` | `status`: `todo`, `working`, `needs_you`, `checking`, `done`. 404 unless you can see the task's chat. |
+| GET | `/api/task-settings` | Any | | `{ settings }`: the settings this install declares (`CIRCLECHAT_TASK_SETTINGS_FILE`), for the menus. |
+| PUT | `/api/tasks/:id/settings` | The task's creator, or an admin | `{ "<key>": "<value>", ... }` | 404 unless you can see the task's chat. 403 for anyone else. 400 for an unknown key or value, or a done or cancelled task. Each changed key writes one history row, and the `task` event goes out. |
+| GET | `/api/tasks/:id/settings/history` | Any | | `{ changes }`, newest first: `{ id, key, oldValue, newValue, byType, byId, at }`. 404 unless you can see the task's chat. No route edits or deletes a change. |
+
+### Task settings
+
+Every task in the task routes, the Board and the `task` events carries `settings`, each declared setting's choice with the defaults filled in (`{}` when the install declares none), and `cloud`: `null`, or the latest move of the task's work to a cloud model, `{ since, reason, text }`, where `reason` is `stalled` or `cloud_from_start` and `text` is the server's own line for it.
+
+### The gateway route
+
+A separate listener, only with `CIRCLECHAT_GATEWAY_PORT` set (see [Configuration](configuration.md)), for one program: a model gateway in front of the agents. Every request needs `Authorization: Bearer <key>` with the key in `CIRCLECHAT_GATEWAY_KEY_FILE`; anything else gets 401 with no detail. The main port answers 404 for all of these.
+
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| GET | `/gateway/tasks/:id` | | `{ task, status, settings, open }`. `open` is false for a done, cancelled or archived task, or one in an archived chat. 404 for no such task. |
+| GET | `/gateway/agents/:handle/tasks` | | `{ tasks: [ids] }`: the open tasks assigned to the agent in the chat of the turn it has running now. Empty when the agent is idle or unknown. |
+| GET | `/gateway/agents/:handle/tasks/:id` | | `{ on }`: true when the agent created the task or is assigned to it. |
+| POST | `/gateway/tasks/:id/cloud-switch` | `{ n, reason }` | The only write. `n`: a whole number from 1, the gateway's count of moves for the task; `reason`: `stalled` or `cloud_from_start`; no other fields. 201 when recorded: a system line in the task's chat, with the server's text, and the `task` event. 200 `{ duplicate: true }` when that `n` is already recorded, and nothing changes. 400 for a bad body, 404 for no such task, 409 for a done, cancelled or archived task. |
 
 ## Integrations
 
