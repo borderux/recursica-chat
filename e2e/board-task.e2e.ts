@@ -153,7 +153,7 @@ test("clicking a card opens its task over the board, with the task's fields and 
   const t = await dialogText();
   for (const want of [/Step 3 of 8/, /Assignee\s*Designer/, /Agent\s*Designer/, /Chat\s*(PB\s*)?acme launch/, /Plan\s*Launch plan/, /Updated\s*\d+ min ago, Today \d\d:\d\d/, /Speed\s*Fast/, /Review\s*Quick/, /Cloud since \d\d:\d\d/, /Files/, /Attach/, /Open in chat/])
     assert.match(t, want);
-  assert.ok(!/comment/i.test(t), "no comments: 2.0 has none");
+  assert.match(t, /Comments\s*No comments yet\./, "the comments (e2e/task-comments.e2e.ts)");
   assert.equal(await statusValue(), "working");
   assert.deepEqual(await page.$$eval(`${DIALOG} select[aria-label="Status"] option`, (l) => l.map((o) => o.textContent)), ["In progress", "Cancel"], "an agent's task: Cancel only");
   assert.equal(await page.$eval(`${DIALOG} a.btn[href]`, (e) => e.getAttribute("href")), `/chats/${ids.launch}`);

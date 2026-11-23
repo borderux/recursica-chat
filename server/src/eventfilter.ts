@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which live events a signed-in person's websocket gets: the same rule as the REST routes.
-// Most events name their chat at the top (chatId). Three carry it inside their payload, and each
+// Most events name their chat at the top (chatId), and go only to people who can see it: a
+// task_comment (taskcomments.ts) goes by its task's chat, like a task. Three carry it inside their payload, and each
 // carries text from that chat, so each is checked against its own chat. One more is cut down:
 //   - delivery: the message an agent was handed, with its text (delivery.chatId)
 //   - approval: an agent's request, with the tool call's details. Like GET /api/approvals: people

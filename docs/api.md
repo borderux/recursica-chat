@@ -130,6 +130,18 @@ Every task in the task routes, the Board and the `task` events carries `settings
 
 Every task in the task routes, the Board, the `task` events and the service's task routes (`GET /api/service/chats/:id/tasks`, `PATCH /api/service/tasks/:id`) carries `statusBy`: `null`, or `{ type: "user", id, name, at }`, the person who set the task's current status through `PATCH /api/tasks/:id`, their display name, and when. It is recorded only after that route answers 200 and only when the status changed; the `task` event then goes out again with it. An agent's tools and the service's routes never record it, and once either moves the task to another status, `statusBy` is `null`. It is also `null` when the person's account is gone. The server keeps one row per task, the latest status a person set, in a table of its own (`task_status_by`).
 
+### Task comments
+
+A task's comments are short plain-text notes kept with the task. The server keeps them in a table of its own (`task_comments`).
+
+- `GET /api/tasks/:id/comments`: `{ comments: [{ id, taskId, author: { type, id, name }, body, createdAt, deleted }] }`, oldest first. `author.type` is `user` or `agent`.
+- `POST /api/tasks/:id/comments` `{ body }`: 201 with `{ comment }`. The body is trimmed and must be 1 to 4000 characters; anything else is 400.
+- `DELETE /api/tasks/:id/comments/:cid`: 204. Only the comment's author, or an admin (admin or owner), may delete one; anyone else gets 403. A comment that isn't on that task is 404. There are no edits. A deleted comment stays in the list with `deleted: true` and an empty `body`, and its text is cleared in the table.
+
+Anyone who can see the task's chat, by the same rule as `GET /api/tasks`, reads and posts. A task that is archived, or in a chat the person can't see, is 404. A finished task (done, cancelled) still takes comments. Every task in the task routes, the Board, the `task` events and the service's task routes carries `commentCount`, its comments that aren't deleted. A new or deleted comment sends a `task_comment` event, `{ chatId, taskId, comment }`, then the `task` event, both only to people who can see the chat. A comment never wakes an agent and never posts a chat message: to ask an agent something, post in the chat.
+
+A service reads the comments on any task in the chats its agents are in, `GET /api/service/tasks/:id/comments`, and posts one with `POST /api/service/tasks/:id/comments` `{ body }`. Its comment is the agent's the task belongs to: the driven agent it's assigned to, or else the driven agent that created it. A task that is no driven agent's is 403, and an archived task is 404. Its socket (`/ws/service`) carries `task_comment` events for its chats.
+
 ### The gateway route
 
 A separate listener, only with `CIRCLECHAT_GATEWAY_PORT` set (see [Configuration](configuration.md)), for one program: a model gateway in front of the agents. Every request needs `Authorization: Bearer <key>` with the key in `CIRCLECHAT_GATEWAY_KEY_FILE`; anything else gets 401 with no detail. The main port answers 404 for all of these.
@@ -232,5 +244,6 @@ Connect to `/ws` with the session cookie, or `?token=<session token>`. The serve
 | `agent_activity` | `agentId`, `chatId`, `entry`, `append?` |
 | `approval` | `approval` |
 | `task` | `chatId`, `task` |
+| `task_comment` | `chatId`, `taskId`, `comment` (a new or deleted comment on a task) |
 | `memory` | `memory` |
 | `delivery` | `delivery` |
