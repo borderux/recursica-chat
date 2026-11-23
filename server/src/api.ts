@@ -29,6 +29,7 @@ import { registerBoard } from "./board.ts";
 import { registerTaskSettings } from "./tasksettings.ts";
 import { registerTaskRules } from "./taskrules.ts";
 import { registerUploads } from "./uploads.ts";
+import { registerTaskStatusBy } from "./taskstatusby.ts";
 import { requestIsHttps, exportWorkspace, eraseWorkspace, hosting, useSsoToken, hostingFetch } from "./hosting.ts";
 
 type Role = "owner" | "admin" | "builder" | "member";
@@ -234,6 +235,7 @@ export function buildApi(app: App): Hono<Env> {
   registerTaskSettings(api, app, { isAdmin, seesChat });
   registerTaskRules(api, app, { isAdmin, seesChat });
   registerUploads(api, app.uploads, { isAdmin, seesChat });
+  registerTaskStatusBy(api, app); // before the PATCH /api/tasks/:id route: records who set a status
   api.patch("/api/me", async (c) => {
     const u = c.get("user");
     const b = await c.req.json();

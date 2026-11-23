@@ -126,6 +126,10 @@ A task is **agent-run** when it's assigned to an agent (`assigneeType` is `agent
 
 Every task in the task routes, the Board and the `task` events carries `settings`, each declared setting's choice with the defaults filled in (`{}` when the install declares none), and `cloud`: `null`, or the latest move of the task's work to a cloud model, `{ since, reason, text }`, where `reason` is `stalled` or `cloud_from_start` and `text` is the server's own line for it.
 
+### Who set a task's status
+
+Every task in the task routes, the Board, the `task` events and the service's task routes (`GET /api/service/chats/:id/tasks`, `PATCH /api/service/tasks/:id`) carries `statusBy`: `null`, or `{ type: "user", id, name, at }`, the person who set the task's current status through `PATCH /api/tasks/:id`, their display name, and when. It is recorded only after that route answers 200 and only when the status changed; the `task` event then goes out again with it. An agent's tools and the service's routes never record it, and once either moves the task to another status, `statusBy` is `null`. It is also `null` when the person's account is gone. The server keeps one row per task, the latest status a person set, in a table of its own (`task_status_by`).
+
 ### The gateway route
 
 A separate listener, only with `CIRCLECHAT_GATEWAY_PORT` set (see [Configuration](configuration.md)), for one program: a model gateway in front of the agents. Every request needs `Authorization: Bearer <key>` with the key in `CIRCLECHAT_GATEWAY_KEY_FILE`; anything else gets 401 with no detail. The main port answers 404 for all of these.
