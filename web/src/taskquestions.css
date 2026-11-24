@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: AGPL-3.0-only
+   A question's buttons in a task's window, and the Question mark on its card (ui/taskquestions.tsx).
+   Upstream's colors and controls, in a file of its own. */
+.tq { display: grid; gap: 6px; margin-top: 6px; }
+.tq-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.tq-btn { height: auto; min-height: 36px; max-width: 100%; white-space: normal; text-align: center; line-height: 1.3; padding: 6px 14px; overflow-wrap: anywhere; }
+.tq-btn:disabled { cursor: default; opacity: .55; }
+.tq-btn:disabled:hover { background: var(--surface); }
+.tq-btn.tq-chosen, .tq-btn.tq-chosen:disabled:hover { opacity: 1; background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.tq-btn .i { width: 14px; height: 14px; flex: none; }
+.tq-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tq-state { color: var(--ink-2); overflow-wrap: anywhere; }
+
+@media (max-width: 600px) {
+  .tq-btn { min-height: 44px; font-size: 15px; }
+}

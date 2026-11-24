@@ -134,7 +134,7 @@ Every task in the task routes, the Board, the `task` events and the service's ta
 
 A task's comments are short plain-text notes kept with the task. The server keeps them in a table of its own (`task_comments`).
 
-- `GET /api/tasks/:id/comments`: `{ comments: [{ id, taskId, author: { type, id, name }, body, createdAt, deleted }] }`, oldest first. `author.type` is `user` or `agent`.
+- `GET /api/tasks/:id/comments`: `{ comments: [{ id, taskId, author: { type, id, name }, body, createdAt, deleted, choices, answerTo, choice, answer }] }`, oldest first. `author.type` is `user` or `agent`. The last four are for [questions](#questions-on-a-task) and are `null` on an ordinary comment.
 - `POST /api/tasks/:id/comments` `{ body }`: 201 with `{ comment }`. The body is trimmed and must be 1 to 4000 characters; anything else is 400.
 - `DELETE /api/tasks/:id/comments/:cid`: 204. Only the comment's author, or an admin (admin or owner), may delete one; anyone else gets 403. A comment that isn't on that task is 404. There are no edits. A deleted comment stays in the list with `deleted: true` and an empty `body`, and its text is cleared in the table.
 
@@ -143,6 +143,31 @@ Anyone who can see the task's chat, by the same rule as `GET /api/tasks`, reads 
 A service reads the comments on any task in the chats its agents are in, `GET /api/service/tasks/:id/comments`, and posts one with `POST /api/service/tasks/:id/comments` `{ body }`. Its comment is the agent's the task belongs to: the driven agent it's assigned to, or else the driven agent that created it. A task that is no driven agent's is 403, and an archived task is 404. Its socket (`/ws/service`) carries `task_comment` events for its chats.
 
 Agents read and leave comments with two core tools, `task_comments { task_id }` and `task_comment { task_id, body }`, only for a task in a chat the agent is in (see [Agents](agents.md#tools-every-agent-has)). An agent's comment has the same limits and sends the same events.
+
+### Questions on a task
+
+A question is a task comment with 2 to 6 choices, which a person answers with one click. A program that drives an agent uses it to ask a person what to do next, for example after it sets the agent's task to Needs you, and reads the answer with its comments route. The web app shows a question's choices as buttons in the task's window, and a Question mark on the task's Board card while it waits.
+
+The comment JSON (in both `GET` routes, the `POST` replies and `task_comment` events) has four more fields:
+
+| Field | On a question | On an answer | On any other comment |
+| --- | --- | --- | --- |
+| `choices` | `[{ value, label }]`, 2 to 6 | `null` | `null` |
+| `answer` | `null` until answered, then `{ by: { type, id, name }, choice, at }`: who answered, the value they chose, and when | `null` | `null` |
+| `answerTo` | `null` | the question's comment id | `null` |
+| `choice` | `null` | the value chosen | `null` |
+
+The server keeps them in three nullable columns of `task_comments`: `choices` (the JSON list), `answer_to` and `choice`. An older table gains them in place when the server starts using it. Every task in the task routes, the Board, the `task` events and the service's task routes carries `openQuestions`: its questions that aren't answered or deleted.
+
+- **Asking** (a service): `POST /api/service/tasks/:id/comments` `{ body, choices }`. `body` is the question, with a comment's limits. `choices` is a list of 2 to 6 `{ value, label }`: `value` matches `^[a-z0-9][a-z0-9-]{0,39}$` and is unique in the question; `label` is 1 to 80 characters after trimming. Anything else is 400 with the reason. Without `choices` (or with `choices: null`) the comment is an ordinary one, as before. The question is the driven agent's the task belongs to, by the same rule as a comment. People's `POST /api/tasks/:id/comments` and the agents' `task_comment` tool don't ask questions.
+- **Answering** (a person): `POST /api/tasks/:id/comments/:cid/answer` `{ choice }`, for anyone who can see the task, by the rule above. It is 201 with `{ comment }`, the answer: a comment from the person whose `body` is the choice's label, with `answerTo` and `choice` set. It sends `task_comment` for the answer, then `task_comment` for the question with its `answer`, then the `task` event. It doesn't change the task's status and wakes no agent; the program that asked reads the answer with `GET /api/service/tasks/:id/comments`. The refusals, in the order they're checked:
+  - 404: the task is archived or not one the person can see, or the comment isn't on that task.
+  - 400: the comment is deleted, or isn't a question.
+  - 409: the question was answered already, `"This question was answered already by <name>"`. A question takes one answer.
+  - 400: `choice` isn't one of the question's values.
+- **Deleting**: questions and answers follow the comment rules (the author, or an admin). Deleting an answer does not reopen its question: the question keeps its `answer`, and the deleted answer keeps `answerTo` and `choice` with an empty `body`. Deleting a question clears its `body` and `choices`, so it can't be answered.
+
+The agents' `task_comments` tool shows a question's choices and its answer, for example `What next? [question: choices write-again (Write it again), leave-out (Leave it out)] answered by @person-a: Leave it out`, and an answer as `Leave it out [answer: leave-out]`.
 
 ### The gateway route
 
@@ -246,6 +271,6 @@ Connect to `/ws` with the session cookie, or `?token=<session token>`. The serve
 | `agent_activity` | `agentId`, `chatId`, `entry`, `append?` |
 | `approval` | `approval` |
 | `task` | `chatId`, `task` |
-| `task_comment` | `chatId`, `taskId`, `comment` (a new or deleted comment on a task) |
+| `task_comment` | `chatId`, `taskId`, `comment` (a new or deleted comment on a task, or a question with its new answer) |
 | `memory` | `memory` |
 | `delivery` | `delivery` |
