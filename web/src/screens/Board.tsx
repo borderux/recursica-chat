@@ -14,6 +14,7 @@ import { COLUMNS, boardUrl, cardAgent, dropStatus, filterCount, readQuery, readT
 import { ChatAvatar, TaskBox, chatTitle } from "./Chats.tsx";
 import { TaskSettings } from "../ui/tasksettings.tsx";
 import { CommentCount } from "../ui/taskcomments.tsx";
+import { QuestionMark, hasOpenQuestion } from "../ui/taskquestions.tsx";
 import { Assignee, StatusMenu, TaskModal, Who } from "./BoardTask.tsx";
 import { personMoves } from "../taskrules.ts";
 import "../board.css";
@@ -306,8 +307,9 @@ function Card(props: { t: Task; plan: string; dragging: boolean; onMove: (s: Sta
         </span>
         <b className={t.status === "done" || t.status === "cancelled" ? "done-t" : ""}>{t.title}</b>
       </div>
-      {(t.status === "checking" || t.status === "cancelled" || (a && showsWorking(t))) && (
+      {(t.status === "checking" || t.status === "cancelled" || (a && showsWorking(t)) || hasOpenQuestion(t)) && (
         <div className="board-marks">
+          <QuestionMark t={t} />
           {t.status === "checking" && <span className="status working">Checking</span>}
           {t.status === "cancelled" && <span className="status off">Cancelled</span>}
           {t.assigneeType === "agent" && <WorkingMark a={a} chatId={t.chatId} done={!showsWorking(t)} />}

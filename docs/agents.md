@@ -82,7 +82,7 @@ The gateway gives every agent these CircleChat tools. They are always allowed.
 | `task_update` | Set a task to `todo`, `working`, `needs_you`, `checking` or `done`. |
 | `attach_files` | Attach files to a message in this chat, and to a task. See [Attached files](#attached-files). |
 | `read_file` | Read the text of a file in a chat the agent is in: a PDF, `.txt` or `.md` a person uploaded, or an agent's text file. See [People's uploads](#peoples-uploads). |
-| `task_comments` | Read a task's comments, oldest first, for a task in a chat the agent is in. |
+| `task_comments` | Read a task's comments, oldest first, for a task in a chat the agent is in, with a question's choices and its answer. |
 | `task_comment` | Leave a comment on a task as the agent, 1 to 4000 characters, for a task in a chat the agent is in. It shows on the task, not in the chat, and wakes no one. |
 
 Connected apps and MCP servers add more tools where they are granted.

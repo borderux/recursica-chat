@@ -163,6 +163,8 @@ export interface Task {
   cloud?: { since: number; reason: string; text: string } | null;
   /** How many comments it has that aren't deleted (server/src/taskcomments.ts). */
   commentCount?: number;
+  /** How many of its questions wait for an answer (server/src/taskcomments.ts). */
+  openQuestions?: number;
 }
 /** A comment on a task (server/src/taskcomments.ts): plain text; a deleted one has no body. */
 export interface TaskComment {
@@ -172,6 +174,11 @@ export interface TaskComment {
   body: string;
   createdAt: number;
   deleted: boolean;
+  /** A question's choices, its answer once there is one; on an answer, what it answers and the value chosen. */
+  choices?: { value: string; label: string }[] | null;
+  answer?: { by: { type: "user" | "agent"; id: string; name: string }; choice: string; at: number } | null;
+  answerTo?: string | null;
+  choice?: string | null;
 }
 export interface Memory {
   id: string;

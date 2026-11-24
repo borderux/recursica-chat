@@ -8,7 +8,7 @@ import type { Bus } from "./bus.ts";
 import { progressOf, writeProgress } from "./taskprogress.ts";
 import { taskExtras } from "./tasksettings.ts";
 import { statusByOf } from "./taskstatusby.ts";
-import { commentCountOf } from "./taskcomments.ts";
+import { commentCountOf, openQuestionsOf } from "./taskcomments.ts";
 
 export const MAX_HOPS = 5;
 
@@ -509,6 +509,7 @@ export class Services {
         ...taskExtras(this.db, r), // settings and cloud (tasksettings.ts)
         statusBy: statusByOf(this.db, r), // the person who set its status, while it stands (taskstatusby.ts)
         commentCount: commentCountOf(this.db, r.id), // its comments that aren't deleted (taskcomments.ts)
+        openQuestions: openQuestionsOf(this.db, r.id), // its questions that wait for an answer (taskcomments.ts)
       }
     );
   }

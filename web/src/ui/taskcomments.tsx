@@ -4,12 +4,13 @@
 // a chat message is: a person's with their @mentions marked, an agent's as Markdown, never as HTML.
 // The list is live (task_comment events). The author, or an admin, deletes one, after a second click
 // to confirm; a deleted one says "Comment deleted". A comment never reaches an agent: asking an agent
-// something stays the Answer box, which posts in the chat.
+// something stays the Answer box, which posts in the chat. A question's buttons are ui/taskquestions.tsx.
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { api, type Task, type TaskComment } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { AgentAv, Icon, UserAv, ago, dayLabel, withMentions } from "./ui.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { QuestionChoices } from "./taskquestions.tsx";
 import "../taskcomments.css";
 
 export const MAX_COMMENT = 4000;
@@ -74,7 +75,7 @@ export function TaskComments({ t }: { t: Task }) {
       ) : list.length ? (
         <ol className="tc-list">
           {list.map((c) => (
-            <Comment key={c.id} c={c} onError={fail} />
+            <Comment key={c.id} c={c} onError={fail} onAnswered={(x) => setList((l) => mergeComment(l ?? [], x))} reload={() => void load()} />
           ))}
         </ol>
       ) : (
@@ -85,7 +86,7 @@ export function TaskComments({ t }: { t: Task }) {
   );
 }
 
-function Comment({ c, onError }: { c: TaskComment; onError: (e: unknown) => void }) {
+function Comment({ c, onError, onAnswered, reload }: { c: TaskComment; onError: (e: unknown) => void; onAnswered: (a: TaskComment) => void; reload: () => void }) {
   const { me, isAdmin, agent, user, who } = useStore();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -123,6 +124,7 @@ function Comment({ c, onError }: { c: TaskComment; onError: (e: unknown) => void
         ) : (
           <div className="tc-body">{a ? <Markdown text={c.body} /> : withMentions(c.body)}</div>
         )}
+        {!c.deleted && c.choices && <QuestionChoices c={c} onAnswered={onAnswered} reload={reload} />}
         {asking && (
           <div className="tc-ask" role="group" aria-label="Delete this comment?">
             <span className="small">Delete this comment?</span>

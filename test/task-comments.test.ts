@@ -84,7 +84,7 @@ test("a member reads and posts: oldest first, with the author, and the task's co
     assert.equal(r.status, 201);
     const c1 = r.json.comment;
     assert.ok(/^tcm_/.test(c1.id));
-    assert.deepEqual({ ...c1, id: "", createdAt: 0 }, { id: "", taskId: s.task.id, author: { type: "user", id: s.a.id, name: "Person A" }, body: "Use the blue palette.", createdAt: 0, deleted: false });
+    assert.deepEqual({ ...c1, id: "", createdAt: 0 }, { id: "", taskId: s.task.id, author: { type: "user", id: s.a.id, name: "Person A" }, body: "Use the blue palette.", createdAt: 0, deleted: false, choices: null, answerTo: null, choice: null, answer: null });
     assert.ok(c1.createdAt >= before && c1.createdAt <= Date.now());
     const c2 = (await s.b.c.post(`/api/tasks/${s.task.id}/comments`, { body: "Agreed.\n<b>not html</b>" })).json.comment;
     assert.equal(c2.body, "Agreed.\n<b>not html</b>", "plain text, kept as written");
