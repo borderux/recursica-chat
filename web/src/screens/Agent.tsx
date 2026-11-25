@@ -120,10 +120,15 @@ export function ProfileScreen({ id }: { id: string }) {
       .get(`/api/agents/${id}`)
       .then((r) => {
         setLoaded(r.agent);
+        // the list this app loaded at sign-in can be older than the server's copy: the server's CLI
+        // changes a managed agent's settings without an event, so take the fresh one
+        upsertAgent(r.agent);
         setChats(r.chats.filter(Boolean));
         setMems(r.memories);
       })
       .catch(fail);
+    // upsertAgent changes with the list, so it would fetch again after each update
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, fail]);
 
   const [draft, setDraft] = useState({ name: "", roleTitle: "", instructions: "", engine: "", model: "", sandbox: "docker" as Agent["sandbox"], budget: "" });
