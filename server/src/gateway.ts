@@ -21,6 +21,7 @@ import type { Services, Agent } from "./services.ts";
 import { personHandle } from "./profile.ts";
 import { serviceById } from "./serviceaccounts.ts";
 import { TASK_STATUSES } from "./archive.ts";
+import { previewText, withPreviews } from "./toolpreview.ts";
 
 export type Decision = "allow" | "ask" | "block" | "off";
 type Category = "core" | "read" | "write" | "danger";
@@ -34,6 +35,8 @@ export interface ToolDef {
   /** an HTTP connection's tool: the method and base address, for the never-list */
   http?: { method: string; base: string };
   run(args: any, ctx: CallContext): Promise<string>;
+  /** an MCP tool's preview, for its approval card: Markdown from its server's preview tool (toolpreview.ts) */
+  preview?(args: any): Promise<string>;
 }
 
 // the files a message holds, with their ids, so an agent can bundle its own files later (files.ts)
@@ -223,6 +226,7 @@ export class Gateway {
           category: "write",
           resource: { type: "mcp", id: s.id, name: s.name, identity: "agent" },
           run: async (args) => this.callMcp(s, t.name, args),
+          ...(t.preview ? { preview: (args: any) => this.callMcp(s, t.preview, args) } : {}),
         });
       }
     }
@@ -513,13 +517,15 @@ export class Gateway {
     }
   }
 
-  private askApproval(t: ToolDef, args: any, ctx: CallContext, identity: string): Promise<any> {
+  private async askApproval(t: ToolDef, args: any, ctx: CallContext, identity: string): Promise<any> {
+    // the tool's own preview of this exact call, when its server gives one (toolpreview.ts)
+    const preview = t.preview ? await previewText(() => t.preview!(args ?? {})) : undefined;
     const ap = this.svc.createApproval({
       agentId: ctx.agent.id,
       chatId: ctx.chatId,
       source: "gateway",
       title: `${ctx.agent.name} wants to use ${t.name}`,
-      detail: { tool: t.name, args, identity, resource: t.resource?.name ?? "", category: t.category, requester: ctx.requester },
+      detail: { tool: t.name, args, identity, resource: t.resource?.name ?? "", category: t.category, requester: ctx.requester, ...(preview ? { preview } : {}) },
       options: [
         { id: "allow_once", label: "Approve once" },
         { id: "allow_always", label: "Always in this chat" },
@@ -582,12 +588,8 @@ export class Gateway {
       const client = await this.mcpClient(s);
       const res = await client.listTools();
       const before = new Set(json<any[]>(s.tools, []).map((t) => t.name));
-      const tools = res.tools.map((t: any) => ({
-        name: t.name,
-        description: t.description ?? "",
-        inputSchema: t.inputSchema,
-        annotations: t.annotations ?? {},
-      }));
+      // a preview tool isn't kept as a tool: it's named on the tool it previews (toolpreview.ts)
+      const tools = withPreviews(res.tools as any[]);
       const added = tools.filter((t: any) => !before.has(t.name)).map((t: any) => t.name);
       const pol = this.policies("mcp", sid);
       for (const n of added)

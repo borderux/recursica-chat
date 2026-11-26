@@ -5,6 +5,7 @@ import { FileChips, UPLOAD_ACCEPT } from "../ui/files.tsx";
 import { api, type Agent, type Approval, type Chat, type Member, type Message, type Task } from "../api.ts";
 import { useBus, useStore } from "../store.tsx";
 import { Markdown } from "../ui/Markdown.tsx";
+import { CallPreview, previewOf } from "../ui/toolpreview.tsx";
 import { progressLine, showsWorking } from "../taskprogress.ts";
 import { agentRunNote, personMoves } from "../taskrules.ts";
 import { allFilled, fillStarter, mentionsAttachment, placeholdersIn, previewParts, startersFor } from "../starters.ts";
@@ -811,7 +812,9 @@ function ApprovalCard({ m, ap }: { m: Message; ap?: Approval }) {
         {m.body}
       </div>
       <div className="card-b">
-        {d.tool || d.title ? (
+        {d.tool && previewOf(d) ? (
+          <CallPreview tool={d.tool} args={d.args} preview={previewOf(d)!} />
+        ) : d.tool || d.title ? (
           <div style={{ background: "var(--bg)", borderRadius: 14, padding: "10px 12px" }}>
             <code className="tool" style={{ background: "none", padding: 0 }}>
               {d.tool ? `${d.tool}(${argsSummary(d.args)})` : d.title}
