@@ -17,7 +17,7 @@ if (process.env.EXTRA_TOOL_FILE && existsSync(process.env.EXTRA_TOOL_FILE)) {
 }
 // PREVIEW_TOOLS=1: tools whose _meta names a preview tool for their approval cards (server/src/toolpreview.ts)
 if (process.env.PREVIEW_TOOLS === "1") {
-  const meta = (preview: string) => ({ _meta: { "recursicachat/preview": preview } });
+  const meta = (preview: string) => ({ _meta: { "ui/preview": preview } });
   server.registerTool("write_note", { description: "Write a note", inputSchema: { title: z.string(), lines: z.array(z.string()) }, ...meta("write_note_preview") }, async ({ title }) => ({
     content: [{ type: "text", text: `wrote ${title}` }],
   }));

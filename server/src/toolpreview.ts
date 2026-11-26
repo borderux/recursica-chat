@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Tool previews for approval cards. An MCP server may name, in a tool's _meta, a preview tool for it:
 //
-//   { "name": "write_note", "_meta": { "recursicachat/preview": "write_note_preview" }, ... }
+//   { "name": "write_note", "_meta": { "ui/preview": "write_note_preview" }, ... }
 //
 // The preview tool, on the same server, takes the same arguments, changes nothing, and returns short
 // Markdown that says what the call would do. When a call to the tool waits for a person's approval,
 // the gateway calls the preview tool with the call's exact arguments, and the approval card shows the
-// Markdown, with the exact call one click away (web/src/ui/toolpreview.tsx). A preview tool is never
+// Markdown above the exact call (web/src/ui/toolpreview.tsx). A preview tool is never
 // offered to agents and gets no rule of its own. With no preview, or one that fails, says nothing or
 // takes too long, the card is as it was.
 
 /** The _meta key that names a tool's preview tool. */
-export const PREVIEW_META = "recursicachat/preview";
+export const PREVIEW_META = "ui/preview";
 
 /** How long the gateway waits for a preview, and the most of it the card shows. */
 export const PREVIEW_LIMITS = { ms: 10_000, chars: 20_000 };
