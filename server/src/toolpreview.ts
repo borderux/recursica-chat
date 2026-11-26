@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Tool previews for approval cards. An MCP server may name, in a tool's _meta, a preview tool for it:
 //
-//   { "name": "write_note", "_meta": { "ui/preview": "write_note_preview" }, ... }
+//   { "name": "write_note", "_meta": { "circlechat/preview": "write_note_preview" }, ... }
 //
 // The preview tool, on the same server, takes the same arguments, changes nothing, and returns short
 // Markdown that says what the call would do. When a call to the tool waits for a person's approval,
@@ -11,7 +11,7 @@
 // takes too long, the card is as it was.
 
 /** The _meta key that names a tool's preview tool. */
-export const PREVIEW_META = "ui/preview";
+export const PREVIEW_META = "circlechat/preview";
 
 /** How long the gateway waits for a preview, and the most of it the card shows. */
 export const PREVIEW_LIMITS = { ms: 10_000, chars: 20_000 };
