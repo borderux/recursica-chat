@@ -169,6 +169,14 @@ The server keeps them in three nullable columns of `task_comments`: `choices` (t
 
 The agents' `task_comments` tool shows a question's choices and its answer, for example `What next? [question: choices write-again (Write it again), leave-out (Leave it out)] answered by @person-a: Leave it out`, and an answer as `Leave it out [answer: leave-out]`.
 
+### A plan from a service
+
+A service posts a plan as an agent it drives, with steps it already knows: `POST /api/service/chats/:id/plans` `{ agent, title, steps }`. `agent` is the agent's handle, with or without `@`. It does what the agent's own `propose_plan` tool does, as that agent: one task per step, in order, assigned to the agent and created by it, with one plan id, then the agent's `plan` message (the plan card). The `task` and `message` events go out as for a proposed plan, and the plan card follows its tasks the same way. It starts no turn and wakes no one.
+
+- `title`: 1 to 200 characters after trimming. `steps`: a list of 1 to 20 step titles, each 1 to 200 characters after trimming. Anything else is 400 with the reason; nothing is cut short.
+- 201 with `{ plan: { id, messageId }, tasks }`, the tasks in step order, as `GET /api/service/chats/:id/tasks` gives them.
+- 404 for a chat none of the service's agents is in, 403 for an agent it doesn't drive, 409 for an agent it drives that isn't in the chat.
+
 ### The gateway route
 
 A separate listener, only with `CIRCLECHAT_GATEWAY_PORT` set (see [Configuration](configuration.md)), for one program: a model gateway in front of the agents. Every request needs `Authorization: Bearer <key>` with the key in `CIRCLECHAT_GATEWAY_KEY_FILE`; anything else gets 401 with no detail. The main port answers 404 for all of these.
